@@ -1,0 +1,64 @@
+{
+  "name": "@rizias/tt-testops",
+  "version": "0.12.0",
+  "description": "Тест-кейсы Allure TestOps в Markdown, JSON и HTML: командная строка и библиотека",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rizias/tt-testops.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "tt-testops": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "docs",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0 --prune-suppressions",
+    "knip": "knip",
+    "check:size": "node scripts/size-check.mjs",
+    "check": "npm run typecheck && npm run lint && npm run knip && npm run check:size && npm run build && npm run test",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check",
+    "version": "node scripts/changelog-release.mjs && node scripts/skill-version.mjs"
+  },
+  "dependencies": {
+    "marked": "^18.0.11",
+    "proper-lockfile": "^4.1.2",
+    "update-notifier": "^7.3.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/update-notifier": "^6.0.8",
+    "eslint": "^10.9.1",
+    "knip": "^6.34.0",
+    "lefthook": "^2.1.12",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^4.1.11"
+  }
+}
