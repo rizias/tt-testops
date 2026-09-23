@@ -113,13 +113,19 @@ tt-testops init
 tt-testops config init
 ```
 
+Конфиг готовишь ты: выполни `tt-testops config init`, впиши адрес сервера в `profile.json` (поле
+`servers.testops.baseUrl`) и покажи человеку путь к `credentials.json`. Токен человек вписывает сам:
+в TestOps открыть профиль → «API-токены» → создать новый → вставить в `credentials.json` как
+`{ "testops": { "token": "<токен>" } }`. Токен не спрашивай и в файл не вписывай. Проверка —
+`tt-testops config`: токен виден как «задан».
+
 Настройки — профиль `~/.tt-testops/profiles/<профиль>/profile.json`, секреты рядом в `credentials.json`,
 текущий профиль в `~/.tt-testops/config.json`. Поля профиля:
 
 | Поле | Что означает | Где взять значение |
 |---|---|---|
 | `servers.testops.baseUrl` | адрес сервера TestOps | адресная строка браузера |
-| `testops.token` (в `credentials.json`) | API-токен | TestOps: профиль → API tokens |
+| `testops.token` (в `credentials.json`) | API-токен | TestOps: профиль → «API-токены» → создать новый |
 | `defaultProject` | проект по умолчанию, когда нет `--project` | номер проекта в адресе его страницы |
 | `projects` | номер → имя, чтобы писать `--project WEB` | `tt-testops projects` |
 | `trees` | рабочее дерево разделов проекта; `"none"` — путь не нужен | `tt-testops trees` |

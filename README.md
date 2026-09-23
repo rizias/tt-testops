@@ -35,6 +35,25 @@ tt-testops config init
 
 ## Быстрый старт
 
+1. Подготовьте настройки — агент сделает это сам, либо вручную:
+
+   ```bash
+   tt-testops config init
+   ```
+
+   В `~/.tt-testops/profiles/default/profile.json` впишите адрес сервера в `servers.testops.baseUrl`.
+
+2. В TestOps откройте свой профиль, выберите «API-токены», создайте новый токен и скопируйте его.
+
+3. Вставьте токен в `~/.tt-testops/profiles/default/credentials.json` (Windows:
+   `C:\Users\<вы>\.tt-testops\profiles\default\credentials.json`):
+
+   ```json
+   { "testops": { "token": "<токен>" } }
+   ```
+
+4. Проверьте: `tt-testops config` — токен показан как «задан».
+
 Дальше — один кейс на экран:
 
 ```bash
@@ -52,7 +71,7 @@ tt-testops case <ид-кейса>
 | `description` | заметка о контуре | — | — | по желанию |
 | `servers.testops.kind` | вид сервера, значение `"allure-testops"` | — | `"allure-testops"` | не меняется |
 | `servers.testops.baseUrl` | адрес сервера TestOps | `TT_TESTOPS_SERVER_TESTOPS_BASE_URL` | обязателен | адресная строка браузера |
-| `testops.token` (в `credentials.json`) | API-токен | `TT_TESTOPS_SERVER_TESTOPS_TOKEN` | обязателен | TestOps: профиль → API tokens |
+| `testops.token` (в `credentials.json`) | API-токен | `TT_TESTOPS_SERVER_TESTOPS_TOKEN` | обязателен | TestOps: профиль → «API-токены» → создать новый |
 | `defaultProject` | проект по умолчанию, когда нет `--project` | `TT_TESTOPS_DEFAULT_PROJECT` | — | номер проекта в адресе его страницы |
 | `projects` | номер → имя, чтобы писать `--project WEB` | нет | — | `tt-testops projects` |
 | `people` | учётка сервера → как показывать | нет | — | по желанию |
