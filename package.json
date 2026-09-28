@@ -1,6 +1,6 @@
 {
   "name": "@rizias/tt-testops",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "Тест-кейсы Allure TestOps в Markdown и HTML: командная строка",
   "type": "module",
   "license": "MIT",
