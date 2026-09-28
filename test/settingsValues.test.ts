@@ -27,32 +27,20 @@ function envFor(h: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 describe('порядок источника значения', () => {
   it('переменная перекрывает значение из файла', () => {
     const h = makeHome(
-      { servers: { testops: { baseUrl: 'https://x.test' } }, limits: { maxCases: 50 } },
+      { servers: { testops: { baseUrl: 'https://x.test' } }, defaultProject: 50 },
       { testops: { token: 'tok' } },
     );
-    const cfg = loadConfig({}, envFor(h, { TT_TESTOPS_MAX_CASES: '77' }));
-    expect(cfg.maxCases).toBe(77);
+    const cfg = loadConfig({}, envFor(h, { TT_TESTOPS_DEFAULT_PROJECT: '77' }));
+    expect(cfg.defaultProjectId).toBe(77);
   });
 
   it('файл перекрывает умолчание', () => {
     const h = makeHome(
-      { servers: { testops: { baseUrl: 'https://x.test' } }, limits: { maxCases: 250 } },
+      { servers: { testops: { baseUrl: 'https://x.test' } }, defaultProject: 45 },
       { testops: { token: 'tok' } },
     );
     const cfg = loadConfig({}, envFor(h));
-    expect(cfg.maxCases).toBe(250);
-  });
-
-  it('умолчания — 30 секунд, 100 кейсов, 8 обращений, 3 повтора', () => {
-    const h = makeHome(
-      { servers: { testops: { baseUrl: 'https://x.test' } } },
-      { testops: { token: 'tok' } },
-    );
-    const cfg = loadConfig({}, envFor(h));
-    expect(cfg.timeoutMs).toBe(30_000);
-    expect(cfg.maxCases).toBe(100);
-    expect(cfg.concurrency).toBe(8);
-    expect(cfg.retries).toBe(3);
+    expect(cfg.defaultProjectId).toBe(45);
   });
 
   it('пустая строка в переменной считается заданным значением', () => {
@@ -80,20 +68,11 @@ describe('числовые переменные', () => {
       { servers: { testops: { baseUrl: 'https://x.test' } } },
       { testops: { token: 'tok' } },
     );
-    expect(() => loadConfig({}, envFor(h, { TT_TESTOPS_TIMEOUT_SEC: 'скоро' }))).toThrow(
-      /TT_TESTOPS_TIMEOUT_SEC/,
+    expect(() => loadConfig({}, envFor(h, { TT_TESTOPS_DEFAULT_PROJECT: 'скоро' }))).toThrow(
+      /TT_TESTOPS_DEFAULT_PROJECT/,
     );
   });
 
-  it('значение вне диапазона приводит к ошибке с её именем', () => {
-    const h = makeHome(
-      { servers: { testops: { baseUrl: 'https://x.test' } } },
-      { testops: { token: 'tok' } },
-    );
-    expect(() => loadConfig({}, envFor(h, { TT_TESTOPS_TIMEOUT_SEC: '0' }))).toThrow(
-      /TT_TESTOPS_TIMEOUT_SEC/,
-    );
-  });
 });
 
 describe('путь formatFile', () => {
@@ -121,11 +100,9 @@ describe('путь formatFile', () => {
       'utf8',
     );
     writeFileSync(join(dir, 'credentials.json'), JSON.stringify({ testops: { token: 'tok' } }), 'utf8');
-    const r = run(['config', '--json'], { HOME: home, USERPROFILE: home });
+    const r = run(['config'], { HOME: home, USERPROFILE: home });
     expect(r.code).toBe(0);
-    const view = JSON.parse(r.stdout) as { fields: Array<{ key: string; value: unknown }> };
-    const field = view.fields.find((f) => f.key === 'formatFile');
-    expect(field?.value).toBe(join(home, 'мой-формат.json'));
+    expect(r.stdout).toContain(`formatFile: ${JSON.stringify(join(home, 'мой-формат.json'))} (file)`);
   });
 });
 

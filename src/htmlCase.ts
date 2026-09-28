@@ -1,10 +1,10 @@
 import type { ScenarioState } from './audit.js';
-import { renderScenario } from './htmlRich.js';
-import { type EmbeddedAssets, escapeHtml, renderMarkdown, SAFE_HREF } from './htmlText.js';
+import { scenarioHtml } from './htmlRichSteps.js';
+import { type EmbeddedAssets, escapeHtml, renderMarkdown } from './htmlText.js';
 import type { TestCase } from './model.js';
 import type { FormatProfile } from './profile.js';
 
-export { renderRich, renderScenario } from './htmlRich.js';
+export { renderRich } from './htmlRich.js';
 export type { EmbeddedAssets } from './htmlText.js';
 export { escapeHtml, renderMarkdown } from './htmlText.js';
 
@@ -15,7 +15,6 @@ export interface HtmlCase {
 export const STATE_LABEL: Record<ScenarioState, string> = {
   current: 'актуальный формат',
   oldFormat: 'старый формат',
-  inconsistentFormat: 'несогласованный формат',
   empty: 'пустой сценарий',
 };
 
@@ -23,10 +22,9 @@ function commentsSection(tc: TestCase, assets: EmbeddedAssets, people: PeopleNam
   if (!tc.comments.length) return '';
   const items = tc.comments
     .map((c) => {
-      const when = c.createdAt ? c.createdAt.slice(0, 10) : '';
-      return `<li class="comment"><div class="who">${escapeHtml(people[c.author] ?? c.author)}${
-        when ? ` · ${when}` : ''
-      }</div>${renderMarkdown(c.body, assets)}</li>`;
+      const when = c.createdAt;
+      const who = [people[c.author] ?? c.author, when].filter(Boolean).join(' · ');
+      return `<li class="comment"><div class="who">${escapeHtml(who)}</div>${renderMarkdown(c.body, assets)}</li>`;
     })
     .join('\n');
   return `<section class="comments"><h3>Комментарии (${tc.comments.length})</h3><ul>${items}</ul></section>`;
@@ -37,26 +35,14 @@ export const caseUrl = (baseUrl: string, projectId: number | null, id: string): 
 
 export type PeopleNames = Record<string, string>;
 
-export function caseBody(
-  { tc, state }: HtmlCase,
-  p: FormatProfile,
-  assets: EmbeddedAssets,
-  baseUrl = '',
-  people: PeopleNames = {},
-): string {
+const fact = (label: string, value: string, title = '') =>
+  `<dt${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(label)}</dt><dd>${value}</dd>`;
+
+function peopleFacts(tc: TestCase, people: PeopleNames): string[] {
   const personName = (name: string) => people[name] ?? name;
-  const fact = (label: string, value: string, title = '') =>
-    `<dt${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(label)}</dt><dd>${value}</dd>`;
-
-  const facts: string[] = [];
-  if (tc.path.length) facts.push(fact(p.meta.pathLabel, pathTrail(tc.path)));
-  facts.push(
-    fact('Статус', escapeHtml(tc.status), 'состояние кейса в процессе TestOps, его ставит человек'),
-  );
-  facts.push(fact('Слой', escapeHtml(tc.layer || p.meta.layerDefault)));
-
   const owners = tc.people.filter((m) => m.role.toLowerCase() === 'owner');
   const others = tc.people.filter((m) => m.role.toLowerCase() !== 'owner');
+  const facts: string[] = [];
   if (owners.length)
     facts.push(fact('Владелец', escapeHtml(owners.map((o) => personName(o.name)).join(', '))));
   if (others.length)
@@ -70,58 +56,62 @@ export function caseBody(
         ),
       ),
     );
+  return facts;
+}
 
-  if (tc.issues.length)
-    facts.push(
-      fact(
-        'Задачи',
-        tc.issues
-          .map((i) => {
-            const key = escapeHtml(i.key || i.url);
-            const link = SAFE_HREF.test(i.url)
-              ? `<a href="${escapeHtml(i.url)}" target="_blank" rel="noopener">${key}</a>`
-              : key;
-            const title = i.summary ? ` ${escapeHtml(i.summary)}` : '';
-            const state = i.status
-              ? `<span class="pill${i.closed ? ' pill_done' : ''}">${escapeHtml(i.status)}</span>`
-              : '';
-            return `<div class="rel">${link}${title}${state}</div>`;
-          })
-          .join(''),
-      ),
-    );
+function issuesHtml(tc: TestCase): string {
+  return tc.issues
+    .map((i) => {
+      const label = i.key || i.summary || i.url;
+      const shown = escapeHtml(label);
+      const link = i.url
+        ? `<a href="${escapeHtml(i.url)}" target="_blank" rel="noopener">${shown}</a>`
+        : shown;
+      const title = i.summary && i.summary !== label ? escapeHtml(i.summary) : '';
+      const state = i.status
+        ? `<span class="pill${i.closed ? ' pill_done' : ''}">${escapeHtml(i.status)}</span>`
+        : '';
+      return `<div class="rel">${link}${title}${state}</div>`;
+    })
+    .join('');
+}
 
-  if (tc.linkRefs.length)
-    facts.push(
-      fact(
-        'Ссылки',
-        tc.linkRefs
-          .map((l) =>
-            SAFE_HREF.test(l.url)
-              ? `<div class="rel"><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.name)}</a></div>`
-              : `<div class="rel">${escapeHtml(l.name)}</div>`,
-          )
-          .join(''),
-      ),
-    );
+function linksHtml(tc: TestCase): string {
+  return tc.linkRefs
+    .map((l) =>
+      l.url
+        ? `<div class="rel"><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.name)}</a></div>`
+        : `<div class="rel">${escapeHtml(l.name)}</div>`,
+    )
+    .join('');
+}
 
-  if (tc.relatedCases.length)
-    facts.push(
-      fact(
-        'Связанные кейсы',
-        tc.relatedCases
-          .map((r) => {
-            const label = escapeHtml(r.name || r.id);
-            const body =
-              baseUrl && r.projectId !== null
-                ? `<a href="${caseUrl(baseUrl, r.projectId, r.id)}" target="_blank" rel="noopener">${label}</a>`
-                : label;
-            const kind = r.kind ? `<span class="pill">${escapeHtml(r.kind)}</span>` : '';
-            return `<div class="rel">${body}${kind}</div>`;
-          })
-          .join(''),
-      ),
-    );
+function relatedHtml(tc: TestCase, baseUrl: string): string {
+  return tc.relatedCases
+    .map((r) => {
+      const label = escapeHtml([r.id, r.name].filter(Boolean).join(' '));
+      const project = r.projectId ?? tc.projectId;
+      const body =
+        baseUrl && project !== null && r.id
+          ? `<a href="${caseUrl(baseUrl, project, r.id)}" target="_blank" rel="noopener">${label}</a>`
+          : label;
+      const kind = r.kind ? `<span class="pill">${escapeHtml(r.kind)}</span>` : '';
+      return `<div class="rel rel_case">${kind}${body}</div>`;
+    })
+    .join('');
+}
+
+function caseFacts(tc: TestCase, p: FormatProfile, baseUrl: string, people: PeopleNames): string[] {
+  const facts: string[] = [];
+  if (tc.path.length) facts.push(fact(p.meta.pathLabel, pathTrail(tc.path)));
+  facts.push(
+    fact('Статус', escapeHtml(tc.status), 'состояние кейса в процессе TestOps, его ставит человек'),
+  );
+  if (tc.layer) facts.push(fact('Слой', escapeHtml(tc.layer)));
+  facts.push(...peopleFacts(tc, people));
+  if (tc.issues.length) facts.push(fact('Задачи', issuesHtml(tc)));
+  if (tc.linkRefs.length) facts.push(fact('Ссылки', linksHtml(tc)));
+  if (tc.relatedCases.length) facts.push(fact('Связанные кейсы', relatedHtml(tc, baseUrl)));
   if (tc.tags.length)
     facts.push(
       fact(
@@ -129,40 +119,38 @@ export function caseBody(
         tc.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(''),
       ),
     );
-  for (const a of tc.attributes) facts.push(fact(a.name, escapeHtml(a.value)));
+  for (const a of tc.attributes) if (a.value !== '') facts.push(fact(a.name, escapeHtml(a.value)));
+  return facts;
+}
 
+const block = (title: string, body: string, kind = '') =>
+  body.trim()
+    ? `<section class="block${kind ? ` ${kind}` : ''}"><h3>${title}</h3><div class="blockBody">${body}</div></section>`
+    : '';
+
+export function caseBody(
+  { tc, state }: HtmlCase,
+  p: FormatProfile,
+  assets: EmbeddedAssets,
+  baseUrl = '',
+  people: PeopleNames = {},
+): string {
   const banner =
     p.showMarks && state !== 'current'
       ? `<p class="mark">${STATE_LABEL[state]} — перед автоматизацией кейс надо переписать</p>`
       : '';
 
-  const block = (title: string, body: string, kind = '') =>
-    body.trim()
-      ? `<section class="block${kind ? ` ${kind}` : ''}"><h3>${title}</h3><div class="blockBody">${body}</div></section>`
-      : '';
-
   return [
     banner,
-    `<dl class="facts">${facts.join('')}</dl>`,
+    `<dl class="facts">${caseFacts(tc, p, baseUrl, people).join('')}</dl>`,
     block('Описание', renderMarkdown(tc.description, assets)),
     block('Предварительное условие', renderMarkdown(tc.precondition, assets)),
-    block(
-      'Сценарий',
-      renderScenario(tc.scenarioLines, p, assets, tc.scenarioRich) ||
-        renderMarkdown(tc.scenarioLines.join('\n'), assets),
-      'scenario',
-    ),
+    block('Сценарий', scenarioHtml(tc.scenario, p, assets), 'scenario'),
     block('Ожидаемый результат', renderMarkdown(tc.expectedResult, assets)),
     commentsSection(tc, assets, people),
   ]
     .filter(Boolean)
     .join('\n');
-}
-
-export function testOpsUrl(tc: TestCase, baseUrl: string): string | null {
-  if (tc.projectId === null || tc.projectId === undefined) return null;
-  const base = baseUrl.replace(/\/+$/, '');
-  return `${base}/project/${tc.projectId}/test-cases/${tc.id}`;
 }
 
 export const ICON_AUTO =
@@ -182,7 +170,7 @@ export const pathTrail = (path: string[]): string =>
 
 export function caseId(tc: TestCase, baseUrl: string): string {
   const text = escapeHtml(tc.id);
-  const url = baseUrl ? testOpsUrl(tc, baseUrl) : null;
+  const url = baseUrl && tc.projectId != null ? caseUrl(baseUrl, tc.projectId, tc.id) : null;
   return url
     ? `<a class="id" href="${url}" target="_blank" rel="noopener">${text}</a>`
     : `<span class="id">${text}</span>`;

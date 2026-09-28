@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CaseCache } from '../src/cache.js';
+import { AttachmentStore } from '../src/attachmentStore.js';
 import type { AppConfig } from '../src/config.js';
-import { TestOpsClient } from '../src/testops/client.js';
+import { TestOpsSession } from '../src/testops/session.js';
 import type { PortResponse, TestOpsPort } from '../src/testops/port.js';
 import { CLI, makeProfileHome, run } from './cliRunner.js';
 
@@ -71,10 +71,10 @@ describe('команда tt-testops как процесс', () => {
     }
   });
 
-  it.each(['case', 'list', 'audit', 'fields', 'link', 'attachments', 'projects', 'trees', 'setup'])(
+  it.each(['case', 'list', 'fields', 'link', 'attachments', 'projects', 'trees', 'setup'])(
     'команда %s известна разбору',
     (cmd) => {
-      const env = { TT_TESTOPS_RETRIES: '0', TT_TESTOPS_SERVER_TESTOPS_BASE_URL: 'http://127.0.0.1:9' };
+      const env = { TT_TESTOPS_SERVER_TESTOPS_BASE_URL: 'http://127.0.0.1:9' };
       expect(run([cmd], env).stderr).not.toContain('Unknown command');
     },
   );
@@ -83,6 +83,14 @@ describe('команда tt-testops как процесс', () => {
     const r = run(['показать-всё']);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('Unknown command');
+  });
+
+  it('незнакомый флаг — ошибка с его именем, к серверу обращения нет', () => {
+    const r = run(['list', 'name ~= "вход"', '--projct', '1'], {
+      TT_TESTOPS_SERVER_TESTOPS_BASE_URL: 'http://127.0.0.1:9',
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Незнакомый флаг: --projct');
   });
 
   it('на попытку что-то изменить сказано, что продукт только читает', () => {
@@ -95,7 +103,25 @@ describe('команда tt-testops как процесс', () => {
   it('неизвестный формат назван вместе с доступными', () => {
     const r = run(['case', '1', '--format', 'xml']);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain('markdown, json, html, raw');
+    expect(r.stderr).toContain('markdown, html, raw');
+  });
+
+  it('--text у case — ошибка с именем флага и команды, код 1', () => {
+    const r = run(['case', '1', '--text', 'фраза']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Флаг --text у команды case не используется.');
+  });
+
+  it('флаг не той команды — ошибка, к серверу обращения нет', () => {
+    const r = run(['projects', '--limit', '5'], { TT_TESTOPS_SERVER_TESTOPS_BASE_URL: 'http://127.0.0.1:9' });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Флаг --limit у команды projects не используется.');
+  });
+
+  it('пустой --text — ошибка разбора и код 1', () => {
+    const r = run(['list', '--project', '1', '--text', ' ']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Флагу --text нужна непустая фраза для поиска.');
   });
 });
 
@@ -103,30 +129,23 @@ describe('разделение потоков', () => {
   let home: string;
 
   beforeEach(() => {
-    home = makeProfileHome({ baseUrl: 'https://ts.example', token: 'токен', projects: { '14': 'WEB' } });
+    home = makeProfileHome({ baseUrl: 'https://ts.example', token: 'токен', projects: { '1': 'WEB' } });
   });
   afterEach(() => {
     rmSync(home, { recursive: true, force: true });
   });
 
   it('результат идёт в стандартный вывод, а поток ошибок пуст', () => {
-    const r = run(['link', 'tag = "Smoke"', '--project', '14'], { HOME: home, USERPROFILE: home });
+    const r = run(['link', 'tag = "Smoke"', '--project', '1'], { HOME: home, USERPROFILE: home });
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('https://ts.example/project/14/test-cases');
+    expect(r.stdout).toContain('https://ts.example/project/1/test-cases');
     expect(r.stderr).toBe('');
-  });
-
-  it('предупреждение о проекте вне списка идёт в поток ошибок, а не в результат', () => {
-    const r = run(['link', 'tag = "Smoke"', '--project', '99'], { HOME: home, USERPROFILE: home });
-    expect(r.code).toBe(0);
-    expect(r.stderr).toContain('вне согласованного списка');
-    expect(r.stdout).not.toContain('вне согласованного списка');
   });
 });
 
 describe('команды состояния и очистки сессии', () => {
   let home: string;
-  let cacheDir: string;
+  let profileDir: string;
   const baseUrl = 'https://ts.example';
   const apiToken = 'API-токен';
   const sessionJwt = `h.${Buffer.from(JSON.stringify({ exp: 2_000_000_000 })).toString('base64url')}.s`;
@@ -134,14 +153,14 @@ describe('команды состояния и очистки сессии', () 
 
   beforeEach(() => {
     home = makeProfileHome({ baseUrl, token: apiToken });
-    cacheDir = join(home, '.tt-testops', 'profiles', 'default', 'cache');
+    profileDir = join(home, '.tt-testops', 'profiles', 'default');
   });
 
   afterEach(() => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  const cacheRun = (args: string[], token = apiToken) => {
+  const storeRun = (args: string[], token = apiToken) => {
     writeFileSync(
       join(home, '.tt-testops', 'profiles', 'default', 'credentials.json'),
       JSON.stringify({ testops: { token } }),
@@ -151,20 +170,20 @@ describe('команды состояния и очистки сессии', () 
   };
 
   it('состояние показывает срок текущей пары без содержимого сессии', () => {
-    new CaseCache(cacheDir).putSession(baseUrl, apiToken, { token: sessionJwt, expiresAt });
-    const current = cacheRun(['cache']);
+    new AttachmentStore(profileDir).putSession(baseUrl, apiToken, { token: sessionJwt, expiresAt });
+    const current = storeRun(['attachments']);
     expect(current.code).toBe(0);
     expect(current.stdout).toContain(new Date(expiresAt).toISOString());
     expect(current.stdout).not.toContain(sessionJwt);
     expect(current.stdout).not.toContain(apiToken);
 
-    const other = cacheRun(['cache'], 'другой-токен');
+    const other = storeRun(['attachments'], 'другой-токен');
     expect(other.stdout).toContain('Сессия для настроенной пары отсутствует');
   });
 
   it('очистка удаляет сессию, следующему клиенту нужен обмен', async () => {
-    new CaseCache(cacheDir).putSession(baseUrl, apiToken, { token: sessionJwt, expiresAt });
-    const cleared = cacheRun(['cache', 'clear']);
+    new AttachmentStore(profileDir).putSession(baseUrl, apiToken, { token: sessionJwt, expiresAt });
+    const cleared = storeRun(['attachments', 'clear']);
     expect(cleared.code).toBe(0);
     expect(cleared.stdout).toContain('Очищено');
 
@@ -187,21 +206,35 @@ describe('команды состояния и очистки сессии', () 
       projects: {},
       people: {},
       trees: {},
-      timeoutMs: 30_000,
-      maxCases: 100,
-      concurrency: 8,
-      retries: 0,
-      pageSize: 20,
-      sort: 'id,DESC',
-      cacheDir,
+      profileDir,
     } as AppConfig;
-    await new TestOpsClient(
-      cfg,
-      port,
-      async () => {},
-      () => {},
-      new CaseCache(cacheDir),
-    ).getJwt();
+    await new TestOpsSession(cfg, port, new AttachmentStore(profileDir), () => {}, Date.now).getJwt();
     expect(exchanges).toBe(1);
+  });
+  it('состояние считает только файлы вложений и их объём', () => {
+    mkdirSync(join(profileDir, 'attachments', 'case-1'), { recursive: true });
+    writeFileSync(join(profileDir, 'attachments', 'case-1', '7.png'), Buffer.alloc(300));
+    writeFileSync(join(profileDir, 'attachments', 'case-1', '8.png'), Buffer.alloc(200));
+    mkdirSync(join(profileDir, 'trees'), { recursive: true });
+    writeFileSync(join(profileDir, 'trees', 'x.json'), 'x'.repeat(1000));
+    const r = storeRun(['attachments']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`Хранилище: ${profileDir}`);
+    expect(r.stdout).toContain('Файлов вложений: 2');
+    expect(r.stdout).toContain('Занимает: 500 Б');
+  });
+
+  it('очистка удаляет вложения, сессии и деревья, а настройки профиля оставляет', () => {
+    new AttachmentStore(profileDir).putSession(baseUrl, apiToken, { token: sessionJwt, expiresAt });
+    mkdirSync(join(profileDir, 'attachments', 'case-1'), { recursive: true });
+    writeFileSync(join(profileDir, 'attachments', 'case-1', '7.png'), Buffer.alloc(10));
+    mkdirSync(join(profileDir, 'trees'), { recursive: true });
+    writeFileSync(join(profileDir, 'trees', 'x.json'), '{}');
+    const r = storeRun(['attachments', 'clear']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Очищено: файлов вложений 1');
+    for (const name of ['attachments', 'sessions', 'trees']) expect(existsSync(join(profileDir, name))).toBe(false);
+    expect(existsSync(join(profileDir, 'profile.json'))).toBe(true);
+    expect(existsSync(join(profileDir, 'credentials.json'))).toBe(true);
   });
 });

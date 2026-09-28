@@ -3,6 +3,7 @@ import { renderCaseHtml } from '../src/html.js';
 import type { EmbeddedAssets, HtmlCase } from '../src/html.js';
 import type { TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const assets: EmbeddedAssets = new Map();
 
@@ -10,13 +11,13 @@ const caseWith = (over: Partial<TestCase>): HtmlCase => ({
   tc: {
     id: '1',
     name: 'Кейс',
-    projectId: 14,
+    projectId: 1,
     path: [],
     status: 'Active',
     automated: false,
     layer: '',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
@@ -26,6 +27,7 @@ const caseWith = (over: Partial<TestCase>): HtmlCase => ({
     description: '',
     precondition: '',
     expectedResult: '',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
     scenarioSource: 'newSteps',
     isLegacy: false,

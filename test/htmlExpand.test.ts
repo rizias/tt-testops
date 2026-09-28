@@ -2,32 +2,33 @@ import { describe, expect, it } from 'vitest';
 import { renderBatchHtml } from '../src/html.js';
 import type { TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const assets = new Map<number, string>();
 
-const caseWith = (id: string, path: string[], scenario = ['1. Шаг']): TestCase =>
+const caseWith = (id: string, path: string[]): TestCase =>
   ({
     id,
     name: `Кейс ${id}`,
-    projectId: 14,
+    projectId: 1,
     path,
     status: 'Manual',
     automated: false,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
     relatedCases: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: '',
     precondition: '',
     expectedResult: '',
     scenarioSource: 'newSteps',
-    scenarioLines: scenario,
+    scenario: stepsOf('Шаг'),
+    scenarioLines: ['1. Шаг'],
     comments: [],
   }) as TestCase;
 
@@ -115,7 +116,7 @@ describe('a single result is not a list', () => {
   });
 
   it('still links back to TestOps in a new tab', () => {
-    expect(single).toContain('href="https://testops.test/project/14/test-cases/7"');
+    expect(single).toContain('href="https://testops.test/project/1/test-cases/7"');
     expect(single).toContain('target="_blank"');
   });
 });
@@ -130,24 +131,14 @@ describe('page heading', () => {
   });
 });
 
-describe('sanitising still runs before our own code is added', () => {
-  const nasty = [
-    {
-      tc: caseWith('9', ['Раздел'], ['1. до <script>alert(1)</script> после']),
-      state: 'current' as const,
-    },
-
+describe('собственный код страницы', () => {
+  const cases = [
+    { tc: caseWith('9', ['Раздел']), state: 'current' as const },
     { tc: caseWith('10', ['Раздел']), state: 'current' as const },
   ];
-  const page = renderBatchHtml(nasty, defaultProfile, assets, 'https://testops.test');
+  const page = renderBatchHtml(cases, defaultProfile, assets, 'https://testops.test');
 
-  it('strips the script that came from the case text', () => {
-    expect(page).not.toContain('alert(1)');
-    expect(page).toContain('до');
-    expect(page).toContain('после');
-  });
-
-  it('still ships our handler', () => {
+  it('ships exactly one own script', () => {
     expect((page.match(/<script>/g) ?? []).length).toBe(1);
     expect(page).toContain('data-act="open-all"');
   });

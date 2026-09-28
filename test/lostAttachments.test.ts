@@ -2,23 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../src/config.js';
 import { Gateway } from '../src/gateway.js';
 import type { RawCase, RawOverview } from '../src/model.js';
-import { lostReport } from '../src/report.js';
 import type { AttachmentResult, TestOpsClient } from '../src/testops/client.js';
 
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'tok',
-  defaultProjectId: 14,
-  projects: { '14': 'WEB' },
+  defaultProjectId: 1,
+  projects: { '1': 'WEB' },
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  concurrency: 8,
-  retries: 3,
-  pageSize: 20,
-  sort: 'id,DESC',
-  cacheDir: '/tmp/tt-test-cache',
+  profileDir: '/tmp/tt-test-profile',
 };
 
 const picture = (id: number) => `![вид](/api/testcase/attachment/${id}/content)`;
@@ -35,7 +28,7 @@ const WORLD: Record<number, number[]> = {
 const overviewOf = (id: number): RawOverview =>
   ({
     id,
-    projectId: 14,
+    projectId: 1,
     name: `Кейс ${id}`,
     description: (WORLD[id] ?? []).map(picture).join('\n'),
     lastModifiedDate: 1000 + id,
@@ -65,14 +58,14 @@ const fakeClient = (lost: Map<number, string>): TestOpsClient =>
     fetchRelations: async () => [],
     fetchAttachment: async (id: number): Promise<AttachmentResult> => {
       const reason = lost.get(id);
-      if (reason) return { ok: false, reason, retriable: false };
+      if (reason) return { ok: false, reason, transient: false };
       return { ok: true, bytes: Buffer.from([1, 2, 3]), contentType: 'image/png' };
     },
   }) as unknown as TestOpsClient;
 
 const collect = (lost: Map<number, string>) => {
   const warnings: string[] = [];
-  const gw = new Gateway(cfg, fakeClient(lost), undefined, null, false, (m) => warnings.push(m));
+  const gw = new Gateway(cfg, fakeClient(lost), undefined, null, (m) => warnings.push(m));
   return { gw, warnings };
 };
 
@@ -87,7 +80,7 @@ describe('вложение не скачалось — выгрузка идёт
   });
 
   it('остальные картинки на месте, работа не прервана', async () => {
-    const { gw, warnings } = collect(new Map([[61, 'связь оборвалась']]));
+    const { gw, warnings } = collect(new Map([[61, 'сервер ответил 403']]));
 
     const html = await gw.getTestCaseHtml('102');
 
@@ -96,19 +89,18 @@ describe('вложение не скачалось — выгрузка идёт
     expect(warnings).toHaveLength(1);
   });
 
-  it('когда потерь несколько, в конце названо их число', async () => {
+  it('когда потерь несколько, каждая названа своей строкой и итога нет', async () => {
     const lost = new Map([
       [71, 'сервер ответил 404'],
-      [72, 'связь оборвалась'],
+      [72, 'сервер ответил 403'],
       [73, 'сервер ответил 500'],
     ]);
     const { gw, warnings } = collect(lost);
 
-    await gw.getTestCasesHtml([{ project: '14', rql: 'automation = false' }], 100);
+    await gw.getTestCasesHtml([{ project: '1', rql: 'automation = false' }], 100);
 
     expect(warnings.filter((w) => w.includes('не скачалось —'))).toHaveLength(3);
-    expect(gw.lostAttachments()).toBe(3);
-    expect(lostReport(gw.lostAttachments())).toBe('не скачалось вложений: 3');
+    expect(warnings.some((w) => w.startsWith('не скачалось вложений'))).toBe(false);
   });
 
   it('одна потеря итогом не сопровождается', async () => {

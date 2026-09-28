@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import * as lockfile from 'proper-lockfile';
-import { CacheError } from './errors.js';
+import { StorageError, errorText } from './errors.js';
 
 const WAIT_MS = 50;
-const BUSY_CODES = new Set(['ELOCKED', 'EPERM', 'EBUSY', 'ENOENT']);
+const BUSY_WITH_LOCK_DIR_CODES = new Set(['EPERM', 'EBUSY']);
 
 function errorCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error
@@ -13,8 +13,21 @@ function errorCode(error: unknown): string | undefined {
     : undefined;
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function canCreateBeside(dir: string): boolean {
+  const probe = `${dir}.probe-${process.pid}-${randomUUID()}`;
+  try {
+    mkdirSync(probe);
+    rmSync(probe, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function heldByAnotherProcess(dir: string, code: string): boolean {
+  if (code === 'ELOCKED') return true;
+  if (!BUSY_WITH_LOCK_DIR_CODES.has(code)) return false;
+  return existsSync(`${dir}.lock`) || canCreateBeside(dir);
 }
 
 async function acquire(dir: string, onWait: () => void): Promise<() => Promise<void>> {
@@ -23,8 +36,9 @@ async function acquire(dir: string, onWait: () => void): Promise<() => Promise<v
     try {
       return await lockfile.lock(dir, { retries: 0 });
     } catch (error) {
-      if (!BUSY_CODES.has(errorCode(error) ?? '')) {
-        throw new CacheError(`Не удалось взять замок хранилища: ${errorText(error)}`);
+      const code = errorCode(error) ?? '';
+      if (!heldByAnotherProcess(dir, code)) {
+        throw new StorageError(`Не удалось взять замок хранилища ${dir}: ${errorText(error)}`);
       }
       if (!warned) {
         onWait();
@@ -43,7 +57,7 @@ export async function withLock<T>(
   try {
     mkdirSync(dir, { recursive: true });
   } catch (error) {
-    throw new CacheError(`Хранилище недоступно: ${errorText(error)}`);
+    throw new StorageError(`Хранилище недоступно: ${errorText(error)}`);
   }
   const release = await acquire(dir, onWait);
   let outcome: { value: T } | { error: unknown };
@@ -55,27 +69,31 @@ export async function withLock<T>(
   try {
     await release();
   } catch (error) {
-    throw new CacheError(`Замок хранилища потерян: ${errorText(error)}`);
+    throw new StorageError(`Замок хранилища потерян: ${errorText(error)}`);
   }
   if ('error' in outcome) throw outcome.error;
   return outcome.value;
 }
 
-export function writeAtomic(dir: string, filename: string, content: string, mode?: number): void {
+export function writeAtomic(
+  dir: string,
+  filename: string,
+  content: string | Buffer,
+): void {
   mkdirSync(dir, { recursive: true });
   const target = join(dir, filename);
   const temporary = join(dir, `.${basename(filename)}.${process.pid}.${randomUUID()}.tmp`);
-  let failure: CacheError | null = null;
+  let failure: StorageError | null = null;
   try {
-    writeFileSync(temporary, content, mode === undefined ? undefined : { mode });
+    writeFileSync(temporary, content);
     renameSync(temporary, target);
   } catch (error) {
-    failure = new CacheError(`Не удалось записать файл хранилища: ${errorText(error)}`);
+    failure = new StorageError(`Не удалось записать файл хранилища: ${errorText(error)}`);
   }
   try {
     rmSync(temporary, { force: true });
   } catch (error) {
-    failure ??= new CacheError(`Не удалось удалить временный файл: ${errorText(error)}`);
+    failure ??= new StorageError(`Не удалось удалить временный файл: ${errorText(error)}`);
   }
   if (failure) throw failure;
 }

@@ -1,16 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CacheError } from './errors.js';
 import { withLock, writeAtomic } from './stateLock.js';
 
 export interface StoredSession {
   token: string;
-  expiresAt: number;
-}
-
-interface SessionRecord extends StoredSession {
-  version: 1;
+  expiresAt: number | null;
 }
 
 export function serverKey(baseUrl: string): string {
@@ -21,26 +16,23 @@ function credentialsKey(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 24);
 }
 
-function usableRecord(value: unknown): value is SessionRecord {
+function usableRecord(value: unknown): value is StoredSession {
   if (typeof value !== 'object' || value === null) return false;
-  const record = value as Partial<SessionRecord>;
+  const record = value as Partial<StoredSession>;
   return (
-    record.version === 1 &&
     typeof record.token === 'string' &&
     record.token.length > 0 &&
-    typeof record.expiresAt === 'number' &&
-    Number.isFinite(record.expiresAt)
+    (record.expiresAt === null || Number.isFinite(record.expiresAt))
   );
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export class SessionStore {
   private readonly sessionsDir: string;
 
-  constructor(private readonly root: string) {
+  constructor(
+    root: string,
+    private readonly lockDir: string,
+  ) {
     this.sessionsDir = join(root, 'sessions');
   }
 
@@ -60,32 +52,14 @@ export class SessionStore {
   }
 
   write(baseUrl: string, apiToken: string, session: StoredSession): void {
-    mkdirSync(this.sessionsDir, { recursive: true });
     writeAtomic(
       this.sessionsDir,
       this.fileName(baseUrl, apiToken),
-      JSON.stringify({ version: 1, token: session.token, expiresAt: session.expiresAt }),
+      JSON.stringify({ token: session.token, expiresAt: session.expiresAt }),
     );
   }
 
   withLock<T>(work: () => Promise<T> | T, onWait: () => void = () => {}): Promise<T> {
-    return withLock(this.root, work, onWait);
-  }
-
-  async clear(onWait: () => void = () => {}): Promise<void> {
-    await this.withLock(() => {
-      try {
-        rmSync(this.root, { recursive: true, force: true });
-      } catch (error) {
-        let remaining = ['содержимое хранилища'];
-        try {
-          const entries = readdirSync(this.root, { recursive: true });
-          if (entries.length) remaining = entries.map(String);
-        } catch {}
-        throw new CacheError(
-          `Хранилище очищено не полностью. Осталось: ${remaining.join(', ')}. Причина: ${errorText(error)}`,
-        );
-      }
-    }, onWait);
+    return withLock(this.lockDir, work, onWait);
   }
 }

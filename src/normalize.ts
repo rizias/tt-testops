@@ -1,3 +1,4 @@
+import { isLegacySource } from './audit.js';
 import type {
   CaseIssue,
   CaseLink,
@@ -7,16 +8,16 @@ import type {
   RawComment,
   RawLink,
   RawOverview,
-  RichNode,
-  ScenarioSource,
+  Scenario,
   TestCase,
   TestCaseAttribute,
   TestCaseComment,
 } from './model.js';
 import type { FormatProfile } from './profile.js';
-import { customStepsId } from './scenarioSource.js';
-import { buildStepsWithRich, isFakeNewFormat } from './stepBuilder.js';
-import { cleanText, extractDomain, toLf } from './text.js';
+import { scenarioLines, stepsHaveContent } from './scenarioMarkdown.js';
+import { type ResolvedScenario, runOrEmpty, scenarioPlan } from './scenarioSource.js';
+import { buildEditorSteps } from './stepBuilder.js';
+import { cleanText, toLf } from './text.js';
 import { type ProjectTree, treePath } from './tree.js';
 
 function extractFields(
@@ -32,7 +33,7 @@ function extractFields(
       value: c.name ?? '',
       level: typeof c.customField?.id === 'number' && levels.has(c.customField.id),
     }))
-    .filter((c) => c.field && c.value && !hide.includes(c.field));
+    .filter((c) => c.field && !hide.includes(c.field));
 
   let attrs = fields.filter((c) => !c.level);
   if (order.length) {
@@ -49,14 +50,11 @@ function extractFields(
 }
 
 function extractLinkRefs(links: RawLink[] | undefined): CaseLink[] {
-  const seen = new Set<string>();
   const out: CaseLink[] = [];
   for (const l of links ?? []) {
     const url = (l.url ?? '').trim();
     const name = (l.name ?? '').trim() || url;
-    const key = name + String.fromCharCode(0) + url;
-    if (!name || seen.has(key)) continue;
-    seen.add(key);
+    if (!name) continue;
     out.push({ name, url });
   }
   return out;
@@ -70,14 +68,11 @@ function extractIssues(ov: RawOverview): CaseIssue[] {
       status: i.status ?? '',
       closed: i.closed === true,
       url: i.url ?? '',
-    }))
-    .filter((i) => i.key || i.url);
+    }));
 }
 
 function extractPeople(ov: RawOverview): CasePerson[] {
-  return (ov.members ?? [])
-    .map((m) => ({ name: m.name ?? '', role: m.role?.name ?? '' }))
-    .filter((m) => m.name);
+  return (ov.members ?? []).map((m) => ({ name: m.name ?? '', role: m.role?.name ?? '' }));
 }
 
 function extractRelations(raw: RawCase): CaseRelation[] {
@@ -87,61 +82,26 @@ function extractRelations(raw: RawCase): CaseRelation[] {
       name: r.target?.name ?? '',
       kind: r.type ?? '',
       projectId: typeof r.target?.projectId === 'number' ? r.target.projectId : null,
-    }))
-    .filter((r) => r.id);
+    }));
 }
 
 function extractLayer(ov: RawOverview): string {
   return ov.layer?.name ?? ov.testLayer?.name ?? ov.layerName ?? '';
 }
 
-function formatLinks(links: RawLink[] | undefined): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const l of links ?? []) {
-    let disp = l.name ?? '';
-    if (!disp && l.url) disp = extractDomain(l.url).replace(/^https?:\/\//, '');
-    if (disp && !seen.has(disp)) {
-      seen.add(disp);
-      out.push(disp);
-    }
+const EMPTY: Scenario = { kind: 'empty', fetchError: false };
+
+function detectScenario(raw: RawCase): ResolvedScenario {
+  const plan = scenarioPlan(raw);
+  if (plan.kind === 'inline') return { source: 'inlineSteps', scenario: EMPTY };
+  if (plan.kind === 'fetchError') {
+    return { source: 'empty', scenario: { kind: 'empty', fetchError: true } };
   }
-  return out;
-}
-
-interface ScenarioParts {
-  scenarioSource: ScenarioSource;
-  scenarioLines: string[];
-  scenarioRich?: (RichNode | null)[];
-}
-
-function manualScenario(raw: RawCase, profile: FormatProfile): ScenarioParts {
-  const data = raw.steps;
-  const empty = profile.warnings.emptyScenario;
-  if (isFakeNewFormat(data)) return { scenarioSource: 'rawMarkdown', scenarioLines: [empty] };
-  if (!data) {
-    return { scenarioSource: 'empty', scenarioLines: [empty, profile.warnings.stepsFetchError] };
+  if (plan.kind === 'editor') {
+    const steps = buildEditorSteps(plan.data);
+    if (stepsHaveContent(steps)) return { source: 'newSteps', scenario: { kind: 'steps', steps } };
   }
-  const children = data.root?.children ?? [];
-  if (children.length === 0) return { scenarioSource: 'empty', scenarioLines: [empty] };
-  const built = buildStepsWithRich(children, data, profile);
-  return { scenarioSource: 'newSteps', scenarioLines: built.lines, scenarioRich: built.rich };
-}
-
-function overviewScenario(raw: RawCase, profile: FormatProfile): ScenarioParts {
-  const scenario = raw.overview.scenario ?? {};
-  const hasCustom = customStepsId(scenario) !== null;
-  const hasSteps = (scenario.steps?.length ?? 0) > 0;
-  const scenarioLines = [profile.warnings.emptyScenario];
-  if (hasCustom) return { scenarioSource: 'rawMarkdown', scenarioLines };
-  if (hasSteps) return { scenarioSource: 'inlineSteps', scenarioLines };
-  return { scenarioSource: 'empty', scenarioLines };
-}
-
-function detectScenario(raw: RawCase, profile: FormatProfile): ScenarioParts {
-  return raw.overview.hasManualScenario
-    ? manualScenario(raw, profile)
-    : overviewScenario(raw, profile);
+  return runOrEmpty(raw);
 }
 
 export function normalizeCase(
@@ -150,9 +110,7 @@ export function normalizeCase(
   tree: ProjectTree | null = null,
 ): TestCase {
   const ov = raw.overview;
-  const { scenarioSource, scenarioLines, scenarioRich } = detectScenario(raw, profile);
-
-  const isLegacy = scenarioSource === 'rawMarkdown' || scenarioSource === 'inlineSteps';
+  const { source, scenario } = detectScenario(raw);
   const { path, attributes } = extractFields(ov, profile, tree);
 
   return {
@@ -164,21 +122,20 @@ export function normalizeCase(
     automated: !!ov.automated,
     layer: extractLayer(ov),
     tags: (ov.tags ?? []).map((t) => t.name ?? '').filter(Boolean),
-    links: formatLinks(ov.links),
     linkRefs: extractLinkRefs(ov.links),
     issues: extractIssues(ov),
     people: extractPeople(ov),
     relatedCases: extractRelations(raw),
     attributes,
-    isLegacy,
-    declaredManual: !!ov.hasManualScenario,
-    description: cleanText(ov.description, profile.removeLinks),
-    precondition: cleanText(ov.precondition, profile.removeLinks),
-    expectedResult: cleanText(ov.expectedResult, profile.removeLinks),
-    scenarioSource,
-    scenarioLines,
-    scenarioRich,
+    isLegacy: isLegacySource(source, raw),
+    description: cleanText(ov.description),
+    precondition: cleanText(ov.precondition),
+    expectedResult: cleanText(ov.expectedResult),
+    scenarioSource: source,
+    scenario,
+    scenarioLines: scenarioLines(scenario, profile),
     comments: normalizeComments(raw.comments),
+    attachments: [],
   };
 }
 
@@ -188,8 +145,7 @@ export function normalizeComments(raw: RawComment[] | null | undefined): TestCas
     .sort((a, b) => (a.createdDate ?? 0) - (b.createdDate ?? 0))
     .map((c) => ({
       id: String(c.id ?? ''),
-      author:
-        [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || (c.createdBy ?? 'неизвестно'),
+      author: [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || (c.createdBy ?? ''),
       createdAt: c.createdDate ? new Date(c.createdDate).toISOString() : '',
       body: toLf(c.body ?? '').trim(),
     }));

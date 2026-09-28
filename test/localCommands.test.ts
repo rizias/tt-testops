@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function flags(): Flags {
-  return { _: [project], projects: [], queries: [], for: 'claude' };
+  return { _: [project], projects: [], queries: [], used: [], for: 'claude' };
 }
 
 describe('localCommand init', () => {

@@ -1,5 +1,11 @@
 import { findSimilar } from './queryCheck.js';
-import type { CustomField, CustomFieldValue, ServerProject, TestLayer } from './testops/client.js';
+import type {
+  CustomField,
+  CustomFieldValue,
+  SearchQuery,
+  ServerProject,
+  TestLayer,
+} from './testops/client.js';
 
 export interface FieldSummary {
   name: string;
@@ -29,7 +35,7 @@ export interface ReferenceDeps {
   fetchFieldValueCount(projectId: number, fieldId: number): Promise<number>;
   searchFieldValues(projectId: number, fieldId: number, query: string): Promise<CustomFieldValue[]>;
   fetchLayers(): Promise<TestLayer[]>;
-  countCases(rql: string, projectId: number): Promise<number>;
+  countCases(query: SearchQuery, projectId: number): Promise<number>;
 }
 
 export const LAYER_FIELD = 'layer';
@@ -47,12 +53,10 @@ export async function layerUsage(
   const counted = await Promise.all(
     layers.map(async (l) => ({
       name: l.name,
-      testCasesCount: await deps.countCases(`layer = "${l.name}"`, projectId),
+      testCasesCount: await deps.countCases({ rql: `layer = "${l.name}"` }, projectId),
     })),
   );
-  return counted
-    .filter((l) => l.testCasesCount > 0)
-    .sort((a, b) => b.testCasesCount - a.testCasesCount);
+  return counted.sort((a, b) => b.testCasesCount - a.testCasesCount);
 }
 
 export async function projectOverview(

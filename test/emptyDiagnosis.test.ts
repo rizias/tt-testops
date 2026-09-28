@@ -6,27 +6,21 @@ import type { TestOpsClient } from '../src/testops/client.js';
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'tok',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  concurrency: 8,
-  retries: 3,
-  pageSize: 20,
-  sort: 'id,DESC',
-  cacheDir: '/tmp/tt-test-cache',
+  profileDir: '/tmp/tt-test-profile',
 };
 
 const FIELDS = [
-  { id: -1, name: 'Epic' },
-  { id: 10, name: 'Section1' },
+  { id: -1, name: 'Поле0' },
+  { id: 10, name: 'Поле1' },
 ];
 const VALUES = [
   { name: 'Раздел А', testCasesCount: 81 },
 
-  { name: 'Кaталог  (Catalog)', testCasesCount: 42 },
+  { name: 'Знaчение  Б (B)', testCasesCount: 42 },
 ];
 
 interface Calls {
@@ -56,7 +50,7 @@ function fakeClient(ids: number[], calls: Calls, dirFails = false): TestOpsClien
 }
 
 const run = (rql: string, ids: number[], calls: Calls, dirFails = false, notes: string[] = []) =>
-  new Gateway(cfg, fakeClient(ids, calls, dirFails), undefined, null, false, (m) =>
+  new Gateway(cfg, fakeClient(ids, calls, dirFails), undefined, null, (m) =>
     notes.push(m),
   ).getTestCasesList([{ rql }]);
 
@@ -68,32 +62,16 @@ describe('an empty result is diagnosed, not shrugged off', () => {
     );
   });
 
-  it('a field name differing only in case is repaired and the query repeated', async () => {
-    const calls = { fields: 0, values: 0 };
-    const notes: string[] = [];
-    await expect(run('cf["section1"] = "Раздел А"', [], calls, false, notes)).resolves.toContain(
-      'кейсов не найдено',
-    );
-    expect(notes.join(' ')).toMatch(/запрос исправлен: «section1» → «Section1»/);
-  });
-
-  it('a value differing only in spelling is repaired and the query repeated', async () => {
-    const calls = { fields: 0, values: 0 };
-    const notes: string[] = [];
-    await run('cf["Section1"] = "Каталог (Catalog)"', [], calls, false, notes);
-    expect(notes.join(' ')).toMatch(/«Каталог \(Catalog\)» → «Кaталог {2}\(Catalog\)»/);
-  });
-
   it('unknown value with no look-alike lists what exists', async () => {
     const calls = { fields: 0, values: 0 };
-    await expect(run('cf["Section1"] = "Раздел Аы"', [], calls)).rejects.toThrowError(
+    await expect(run('cf["Поле1"] = "Раздел Аы"', [], calls)).rejects.toThrowError(
       /Доступно: Раздел А/,
     );
   });
 
   it('a genuinely empty section stays an empty result', async () => {
     const calls = { fields: 0, values: 0 };
-    await expect(run('cf["Section1"] = "Раздел А"', [], calls)).resolves.toContain(
+    await expect(run('cf["Поле1"] = "Раздел А"', [], calls)).resolves.toContain(
       'кейсов не найдено',
     );
   });
@@ -106,7 +84,7 @@ describe('an empty result is diagnosed, not shrugged off', () => {
 
   it('costs nothing when the search found something', async () => {
     const calls = { fields: 0, values: 0 };
-    await run('cf["Section1"] = "Раздел А"', [5], calls);
+    await run('cf["Поле1"] = "Раздел А"', [5], calls);
     expect(calls.fields).toBe(0);
     expect(calls.values).toBe(0);
   });

@@ -7,17 +7,11 @@ import { currentFormat, withComments } from './fixtures.js';
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'tok',
-  defaultProjectId: 14,
-  projects: { '14': 'Проект' },
+  defaultProjectId: 1,
+  projects: { '1': 'Проект' },
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  concurrency: 8,
-  retries: 3,
-  pageSize: 20,
-  sort: 'id,DESC',
-  cacheDir: '/tmp/tt-test-cache',
+  profileDir: '/tmp/tt-test-profile',
 };
 
 const client = (found: unknown): TestOpsClient =>

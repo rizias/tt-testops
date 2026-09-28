@@ -1,53 +1,33 @@
-import type { RawCase, TestCase } from './model.js';
+import type { RawCase, RawStepData, ScenarioSource, TestCase } from './model.js';
 
-export type AuditRuleId = 'fakeNewFormat' | 'emptyScenario' | 'oldRawMarkdown';
+function hasCustomStepsMarkdown(data: RawStepData | null | undefined): boolean {
+  if (!data) return false;
+  return Object.values(data.attachments ?? {}).some((a) => a?.name === 'customSteps.md');
+}
+
+export const isLegacySource = (source: ScenarioSource, raw: RawCase): boolean =>
+  source === 'inlineSteps' || hasCustomStepsMarkdown(raw.steps);
 
 export interface AuditFinding {
-  ruleId: AuditRuleId;
+  ruleId: 'emptyScenario' | 'oldRawMarkdown';
   severity: 'warning' | 'error';
   message: string;
   caseId: string;
 }
 
-export interface AuditRules {
-  fakeNewFormat: { enabled: boolean; severity: 'warning' | 'error'; message: string };
-  emptyScenario: { enabled: boolean; severity: 'warning' | 'error'; message: string };
-  oldRawMarkdown: { enabled: boolean; severity: 'warning' | 'error'; message: string };
-}
-
-export const defaultAuditRules: AuditRules = {
-  fakeNewFormat: { enabled: true, severity: 'warning', message: 'Обнови до актуального сценария' },
-  emptyScenario: { enabled: true, severity: 'warning', message: 'Пустой сценарий' },
-  oldRawMarkdown: { enabled: true, severity: 'error', message: 'Старый формат (Raw Markdown)' },
+const RULES: Record<'empty' | 'oldFormat', Omit<AuditFinding, 'caseId'>> = {
+  empty: { ruleId: 'emptyScenario', severity: 'warning', message: 'Пустой сценарий' },
+  oldFormat: { ruleId: 'oldRawMarkdown', severity: 'error', message: 'Старый формат (Raw Markdown)' },
 };
 
-export type ScenarioState = 'current' | 'oldFormat' | 'inconsistentFormat' | 'empty';
+export type ScenarioState = 'current' | 'oldFormat' | 'empty';
 
 export function scenarioStateOf(tc: TestCase, raw: RawCase): ScenarioState {
-  if (tc.scenarioSource === 'empty') return 'empty';
-  const manual = !!raw.overview.hasManualScenario;
-  if (tc.scenarioSource === 'rawMarkdown') return manual ? 'inconsistentFormat' : 'oldFormat';
-  if (tc.scenarioSource === 'inlineSteps' && !manual) return 'oldFormat';
-  return 'current';
+  if (tc.scenarioSource === 'empty' || tc.scenarioSource === 'autotestRun') return 'empty';
+  return isLegacySource(tc.scenarioSource, raw) ? 'oldFormat' : 'current';
 }
 
-export function auditCase(
-  tc: TestCase,
-  raw: RawCase,
-  rules: AuditRules = defaultAuditRules,
-): AuditFinding[] {
-  const out: AuditFinding[] = [];
-  const id = tc.id;
-  const manual = !!raw.overview.hasManualScenario;
-  const add = (ruleId: AuditRuleId) => {
-    const r = rules[ruleId];
-    if (r.enabled) out.push({ ruleId, severity: r.severity, message: r.message, caseId: id });
-  };
-
-  if (manual && tc.scenarioSource === 'rawMarkdown') add('fakeNewFormat');
-  else if (tc.scenarioSource === 'empty') add('emptyScenario');
-  else if (!manual && (tc.scenarioSource === 'rawMarkdown' || tc.scenarioSource === 'inlineSteps'))
-    add('oldRawMarkdown');
-
-  return out;
+export function auditCase(tc: TestCase, raw: RawCase): AuditFinding[] {
+  const state = scenarioStateOf(tc, raw);
+  return state === 'current' ? [] : [{ ...RULES[state], caseId: tc.id }];
 }

@@ -2,16 +2,20 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CaseCache } from '../src/cache.js';
+import { AttachmentStore } from '../src/attachmentStore.js';
 import type { AppConfig } from '../src/config.js';
-import { lostMark, resolveScenario } from '../src/contentResolver.js';
+import { type ResolveDeps, resolveToTestCase } from '../src/contentResolver.js';
+import { lostMark } from '../src/scenarioMarkdown.js';
 import { Gateway } from '../src/gateway.js';
 import { renderMarkdown } from '../src/html.js';
 import type { RawCase } from '../src/model.js';
-import { defaultProfile } from '../src/profile.js';
-import { buildStepsWithRich } from '../src/stepBuilder.js';
+import { defaultProfile, type FormatProfile } from '../src/profile.js';
+import { editorLines } from './scenarioFixtures.js';
 import { TestOpsClient } from '../src/testops/client.js';
 import type { PortResponse, TestOpsPort } from '../src/testops/port.js';
+
+const resolveScenario = async (raw: RawCase, p: FormatProfile, deps: ResolveDeps) =>
+  (await resolveToTestCase(raw, p, deps)).scenarioLines;
 
 const jwtWithExp = (secondsFromNow: number): string =>
   `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + secondsFromNow })).toString('base64url')}.s`;
@@ -26,14 +30,10 @@ const resp = (status: number, body: unknown): PortResponse => ({
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'секрет',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 class RecordingPort implements TestOpsPort {
@@ -63,7 +63,7 @@ const deps = (fetchAttachment: (id: number) => Promise<string>, warns: string[])
 
 const legacyCase = (steps: unknown): RawCase =>
   ({
-    overview: { id: 30233, projectId: 14, hasManualScenario: false, scenario: { steps } },
+    overview: { id: 30233, projectId: 1, hasManualScenario: false, scenario: { steps } },
     steps: null,
     comments: [],
   }) as unknown as RawCase;
@@ -71,7 +71,7 @@ const legacyCase = (steps: unknown): RawCase =>
 describe('вложение общего шага', () => {
   it('запрашивается по своему адресу, а не по адресу обычного', async () => {
     const port = new RecordingPort(() =>
-      resp(200, { content: [], id: 1, projectId: 14, hasManualScenario: false }),
+      resp(200, { content: [], id: 1, projectId: 1, hasManualScenario: false }),
     );
     await new TestOpsClient(cfg, port).fetchAttachment(9, true);
     expect(port.urls.some((u) => u.includes('/api/sharedstep/attachment/9/content'))).toBe(true);
@@ -89,12 +89,12 @@ describe('сохранённое вложение не перекачивает�
   });
 
   it('вторая сборка представления не идёт за ним в TestOps', async () => {
-    const cache = new CaseCache(dir);
+    const store = new AttachmentStore(dir);
     let asked = 0;
     const client = {
       fetchOverview: async () => ({
         id: 1,
-        projectId: 14,
+        projectId: 1,
         name: 'Кейс',
         lastModifiedDate: 1,
         description: '![в](/api/testcase/attachment/9/content)',
@@ -111,7 +111,7 @@ describe('сохранённое вложение не перекачивает�
       fetchTrees: async () => [],
     } as unknown as import('../src/testops/client.js').TestOpsClient;
 
-    const gw = new Gateway(cfg, client, undefined, cache, false, () => {});
+    const gw = new Gateway(cfg, client, undefined, store, () => {});
     await gw.getTestCaseHtml('1');
     await gw.getTestCaseHtml('1');
     expect(asked).toBe(1);
@@ -120,7 +120,7 @@ describe('сохранённое вложение не перекачивает�
 
 describe('вложение общего шага в сценарии', () => {
   it('ссылка ведёт на адрес общего шага', () => {
-    const built = buildStepsWithRich(
+    const lines = editorLines(
       [1],
       {
         root: { children: [1] },
@@ -132,7 +132,7 @@ describe('вложение общего шага в сценарии', () => {
       } as never,
       defaultProfile,
     );
-    const text = built.lines.join('\n');
+    const text = lines.join('\n');
     expect(text).toContain('/api/sharedstep/attachment/7/content');
     expect(text).not.toContain('/api/testcase/attachment/7/content');
   });
@@ -143,7 +143,7 @@ describe('текст шага во вложении', () => {
     const asked: number[] = [];
     const lines = await resolveScenario(
       {
-        overview: { id: 1, projectId: 14, hasManualScenario: true },
+        overview: { id: 1, projectId: 1, hasManualScenario: true },
         steps: {
           root: { children: [1] },
           scenarioSteps: { 1: { body: '', attachmentId: 5 } },
@@ -231,7 +231,7 @@ describe('текстовое вложение шага не скачалось',
       {
         overview: {
           id: 1,
-          projectId: 14,
+          projectId: 1,
           hasManualScenario: false,
           scenario: {
             steps: [{ name: 'Шаг', attachments: [{ id: 909, name: 'description_1.md' }] }],
@@ -254,7 +254,7 @@ describe('текстовое вложение шага не скачалось',
 
 describe('ожидаемый результат лежит во вложении', () => {
   it('он попадает в сценарий, а не теряется', () => {
-    const built = buildStepsWithRich(
+    const lines = editorLines(
       [1],
       {
         root: { children: [1] },
@@ -266,9 +266,8 @@ describe('ожидаемый результат лежит во вложении
         sharedSteps: {},
       } as never,
       defaultProfile,
-      0,
       new Map([[5, 'Форма открылась']]),
     );
-    expect(built.lines.join('\n')).toContain('Форма открылась');
+    expect(lines.join('\n')).toContain('Форма открылась');
   });
 });

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 
 let home: string;
@@ -29,7 +29,7 @@ describe('повреждённые файлы настроек', () => {
     expect(() => loadConfig({}, envFor(home))).toThrow(join(dir, 'profile.json'));
   });
 
-  it('неизвестное поле в profile.json завершается ошибкой с путём файла', () => {
+  it('неизвестное поле в profile.json даёт предупреждение с путём файла, команда идёт дальше', () => {
     const { dir } = baseHome();
     writeFileSync(
       join(dir, 'profile.json'),
@@ -37,14 +37,24 @@ describe('повреждённые файлы настроек', () => {
       'utf8',
     );
     writeFileSync(join(dir, 'credentials.json'), JSON.stringify({ testops: { token: 'secret-token-value' } }), 'utf8');
-    expect(() => loadConfig({}, envFor(home))).toThrow(join(dir, 'profile.json'));
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      expect(loadConfig({}, envFor(home)).baseUrl).toBe('https://testops.example');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written.join('')).toContain(`неизвестное поле лишнее в ${join(dir, 'profile.json')}`);
   });
 
   it('неверный тип поля завершается ошибкой с путём файла', () => {
     const { dir } = baseHome();
     writeFileSync(
       join(dir, 'profile.json'),
-      JSON.stringify({ servers: { testops: { baseUrl: 'https://testops.example' } }, limits: { maxCases: 'много' } }),
+      JSON.stringify({ servers: { testops: { baseUrl: 'https://testops.example' } }, defaultProject: 'много' }),
       'utf8',
     );
     writeFileSync(join(dir, 'credentials.json'), JSON.stringify({ testops: { token: 'secret-token-value' } }), 'utf8');
@@ -67,17 +77,6 @@ describe('повреждённые файлы настроек', () => {
     profile({ '7': true });
     expect(() => loadConfig({}, envFor(home))).toThrow(join(dir, 'profile.json'));
     expect(() => loadConfig({}, envFor(home))).toThrow('trees.7');
-  });
-
-  it('значение вне диапазона в файле завершается ошибкой с путём файла', () => {
-    const { dir } = baseHome();
-    writeFileSync(
-      join(dir, 'profile.json'),
-      JSON.stringify({ servers: { testops: { baseUrl: 'https://testops.example' } }, limits: { concurrency: 0 } }),
-      'utf8',
-    );
-    writeFileSync(join(dir, 'credentials.json'), JSON.stringify({ testops: { token: 'secret-token-value' } }), 'utf8');
-    expect(() => loadConfig({}, envFor(home))).toThrow(join(dir, 'profile.json'));
   });
 
   it('файл не в UTF-8 завершается ошибкой с путём файла', () => {

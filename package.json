@@ -1,7 +1,7 @@
 {
   "name": "@rizias/tt-testops",
   "version": "0.13.1",
-  "description": "Тест-кейсы Allure TestOps в Markdown, JSON и HTML: командная строка и библиотека",
+  "description": "Тест-кейсы Allure TestOps в Markdown и HTML: командная строка",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -17,29 +17,21 @@
   "bin": {
     "tt-testops": "./dist/cli.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
   "files": [
     "dist",
     "skills",
     "docs",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "lint": "eslint . --max-warnings 0 --prune-suppressions",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint . --max-warnings 0",
     "knip": "knip",
-    "check:size": "node scripts/size-check.mjs",
-    "check": "npm run typecheck && npm run lint && npm run knip && npm run check:size && npm run build && npm run test",
+    "check": "npm run build && npm run typecheck && npm run lint && npm run knip && npm test",
     "prepack": "npm run build",
     "prepublishOnly": "npm run check",
     "version": "node scripts/changelog-release.mjs && node scripts/skill-version.mjs"
@@ -51,9 +43,11 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@types/commonmark": "^0.27.10",
     "@types/node": "^22.20.1",
     "@types/proper-lockfile": "^4.1.4",
     "@types/update-notifier": "^6.0.8",
+    "commonmark": "^0.31.2",
     "eslint": "^10.9.1",
     "knip": "^6.34.0",
     "lefthook": "^2.1.12",

@@ -1,10 +1,7 @@
-import { marked } from 'marked';
-
-export const SAFE_HREF = /^(https?:|mailto:)/i;
+import { Marked } from 'marked';
+import { ATTACHMENT_URL, attachmentKey } from './text.js';
 
 export type EmbeddedAssets = Map<number, string>;
-
-const ATTACHMENT_URL = /\/api\/(?:rs\/)?(?:testcase|sharedstep)\/attachment\/(\d+)\/content/;
 
 export function escapeHtml(s: string): string {
   return s
@@ -12,48 +9,6 @@ export function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function decodeEntities(value: string): string {
-  return value
-    .replace(/&#x([0-9a-f]+);?/gi, (_m, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);?/g, (_m, dec) => String.fromCodePoint(Number(dec)))
-    .replace(/&(amp|colon|tab|newline|NewLine);?/gi, (_m, name) =>
-      name.toLowerCase() === 'amp' ? '&' : name.toLowerCase() === 'colon' ? ':' : '',
-    );
-}
-
-const ALLOWED = new Set(['http', 'https', 'mailto']);
-
-export function safeUrl(value: string): string {
-  const decoded = decodeEntities(value);
-  const colon = decoded.indexOf(':');
-  if (colon === -1) return value;
-  const before = decoded.slice(0, colon);
-  if (/[/?#]/.test(before)) return value;
-  const scheme = before.replace(/[^a-z]/gi, '').toLowerCase();
-  if (!scheme) return value;
-  if (scheme === 'data') return decoded.startsWith('data:image/') ? value : '';
-  return ALLOWED.has(scheme) ? value : '';
-}
-
-const ACTIVE_TAGS = 'script|style|iframe|object|embed|form|base|link|meta|svg|math|applet|frame';
-const URL_ATTRS = 'href|src|action|formaction|data|poster|srcset|background|xlink:href';
-
-function stripActiveContent(html: string): string {
-  return html
-    .replace(new RegExp(`<\\s*(${ACTIVE_TAGS})\\b[\\s\\S]*?<\\s*/\\s*\\1\\s*>`, 'gi'), '')
-    .replace(new RegExp(`<\\s*/?\\s*(${ACTIVE_TAGS})\\b[^>]*>`, 'gi'), '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(
-      new RegExp(`(${URL_ATTRS})\\s*=\\s*("|')([^"']*)\\2`, 'gi'),
-      (_m, attr: string, quote: string, value: string) =>
-        `${attr}=${quote}${safeUrl(value)}${quote}`,
-    )
-    .replace(
-      new RegExp(`(${URL_ATTRS})\\s*=\\s*([^\\s">]+)`, 'gi'),
-      (_m, attr: string, value: string) => `${attr}="${safeUrl(value)}"`,
-    );
 }
 
 export function missingPicture(id: number): string {
@@ -67,18 +22,23 @@ export function missingPicture(id: number): string {
 }
 
 export function embedAttribute(attr: string, url: string, assets: EmbeddedAssets): string | null {
-  const m = ATTACHMENT_URL.exec(url);
+  const [m] = url.matchAll(ATTACHMENT_URL);
   if (!m) return null;
   const id = Number(m[1]);
-  const data = assets.get(id);
+  const data = assets.get(attachmentKey(m[0], String(m[1])));
   if (data) return `${attr}="${data}"`;
   return `${attr}="${missingPicture(id)}" data-missing-attachment="${id}"`;
 }
 
+const markdown = new Marked({
+  breaks: true,
+  tokenizer: { html: () => undefined, tag: () => undefined },
+});
+
 export function renderMarkdown(md: string, assets: EmbeddedAssets): string {
-  const html = stripActiveContent(marked.parse(md, { async: false, breaks: true }) as string);
-  return html.replace(
-    /(src|href)="([^"]*)"/g,
-    (whole, attr: string, url: string) => embedAttribute(attr, url, assets) ?? whole,
-  );
+  const html = (markdown.parse(md, { async: false }) as string).replace(/>\n+/g, '>').replace(/\n+(?=<)/g, '');
+  return html.replace(/\s(href|src)="([^"]*)"/g, (whole, attr: string, url: string) => {
+    const embedded = embedAttribute(attr, url, assets);
+    return embedded ? ` ${embedded}` : whole;
+  });
 }

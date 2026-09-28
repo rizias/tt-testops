@@ -15,7 +15,7 @@ import { STYLE } from './htmlStyle.js';
 import type { FormatProfile } from './profile.js';
 
 export type { EmbeddedAssets, HtmlCase, PeopleNames } from './htmlCase.js';
-export { renderMarkdown, renderRich, renderScenario } from './htmlCase.js';
+export { renderMarkdown, renderRich } from './htmlCase.js';
 export interface PathGroup {
   name: string;
   count: number;
@@ -36,6 +36,12 @@ export type ProjectNames = Record<string, string>;
 export function projectLabel(id: number | null, names: ProjectNames): string {
   if (id === null) return NO_PROJECT;
   return names[String(id)] ?? `Проект ${id}`;
+}
+
+function bySection(a: PathGroup, b: PathGroup): number {
+  if (a.project || b.project) return 0;
+  if (a.name === NO_SECTION || b.name === NO_SECTION) return Number(a.name === NO_SECTION) - Number(b.name === NO_SECTION);
+  return a.name.localeCompare(b.name, 'ru');
 }
 
 export function groupByPath(items: HtmlCase[], names: ProjectNames = {}): PathGroup {
@@ -74,6 +80,7 @@ export function groupByPath(items: HtmlCase[], names: ProjectNames = {}): PathGr
     node.cases.push(item);
   }
   const count = (n: PathGroup): number => {
+    n.children.sort(bySection);
     for (const child of n.children) count(child);
     n.count = n.cases.length + n.children.reduce((s, c) => s + c.count, 0);
     n.automated =
@@ -122,10 +129,11 @@ export function renderCaseHtml(
   assets: EmbeddedAssets,
   baseUrl = '',
   people: PeopleNames = {},
+  filter = '',
 ): string {
   return page(
     `${c.tc.id} · ${c.tc.name}`,
-    `<h1>${typeIcon(c.tc)}${caseId(c.tc, baseUrl)} ${escapeHtml(c.tc.name)}${copyButton(c, baseUrl)}</h1>\n${caseBody(c, p, assets, baseUrl, people)}\n${HANDLER}`,
+    `<h1>${typeIcon(c.tc)}${caseId(c.tc, baseUrl)} ${escapeHtml(c.tc.name)}${copyButton(c, baseUrl)}</h1>\n${filter}${caseBody(c, p, assets, baseUrl, people)}\n${HANDLER}`,
   );
 }
 
@@ -149,7 +157,7 @@ function caseBlock(
     marks.push(`<span class="tag">комментариев: ${c.tc.comments.length}</span>`);
 
   const copy = copyButton(c, baseUrl);
-  const top = TOOLBAR_H + depth * GROUP_H;
+  const top = TOOLBAR_H + FILTER_H + depth * GROUP_H;
   const find = escapeHtml(`${c.tc.id} ${c.tc.name}`.toLowerCase());
   return `<details class="case" id="case-${escapeHtml(c.tc.id)}" data-find="${find}"><summary style="--sticky-top:${top}px;--sticky-z:${60 - depth}">${typeIcon(c.tc)}${caseId(c.tc, baseUrl)}<span class="caseName">${escapeHtml(
     c.tc.name,
@@ -157,6 +165,7 @@ function caseBlock(
 }
 
 const TOOLBAR_H = 44;
+const FILTER_H = 36;
 const GROUP_H = 30;
 
 function groupBlock(
@@ -169,7 +178,7 @@ function groupBlock(
   ids: { next: number },
 ): string {
   const id = `section-${ids.next++}`;
-  const top = TOOLBAR_H + depth * GROUP_H;
+  const top = TOOLBAR_H + FILTER_H + depth * GROUP_H;
   const style = ` style="--sticky-top:${top}px;--sticky-z:${60 - depth};--anchor-offset:${top + GROUP_H + 8}px"`;
 
   const inner = [
@@ -229,9 +238,10 @@ export function renderBatchHtml(
   baseUrl = '',
   names: ProjectNames = {},
   people: PeopleNames = {},
+  filter = '',
 ): string {
   const only = cases[0];
-  if (cases.length === 1 && only) return renderCaseHtml(only, p, assets, baseUrl, people);
+  if (cases.length === 1 && only) return renderCaseHtml(only, p, assets, baseUrl, people, filter);
 
   const tree = groupByPath(cases, names);
   const blockIds = { next: 0 };
@@ -270,6 +280,6 @@ export function renderBatchHtml(
 
   return page(
     `Тест-кейсы (${cases.length})`,
-    `${toolbar}${summary}\n${panel}\n<div id="tree">${treeFilter}${blocks}</div>\n${gutter}\n${pane}\n${toTop}\n${HANDLER}`,
+    `${toolbar}${summary}${filter}\n${panel}\n<div id="tree">${treeFilter}${blocks}</div>\n${gutter}\n${pane}\n${toTop}\n${HANDLER}`,
   );
 }

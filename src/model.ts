@@ -2,18 +2,26 @@ export interface RawAttachment {
   id: number;
   name?: string;
   contentType?: string;
-  contentLength?: number;
-  missed?: boolean;
 }
 export interface RawScenarioStep {
   name?: string;
   keyword?: string;
+  expectedResult?: string | null;
   attachments?: RawAttachment[];
   steps?: RawScenarioStep[];
 }
 export interface RawScenario {
   attachments?: RawAttachment[];
   steps?: RawScenarioStep[];
+}
+export interface RawRunStep {
+  name?: string;
+  keyword?: string;
+  expectedResult?: string | null;
+  steps?: RawRunStep[];
+}
+export interface RawRunScenario {
+  steps?: RawRunStep[];
 }
 export interface RawCustomField {
   name?: string;
@@ -44,7 +52,6 @@ export interface RawOverview {
   id: number;
   projectId?: number;
 
-  lastModifiedDate?: number;
   name?: string;
   description?: string;
   precondition?: string;
@@ -65,7 +72,7 @@ export interface RawOverview {
 
 export interface RichMark {
   type?: string;
-  attrs?: { href?: string };
+  attrs?: { href?: string; kind?: string };
 }
 export interface RichNode {
   type?: string;
@@ -111,12 +118,42 @@ export interface RawCase {
   overview: RawOverview;
   steps: RawStepData | null;
 
+  runScenario?: RawRunScenario | null;
+
   relations?: RawRelation[] | null;
 
   comments?: RawComment[] | null;
 }
 
-export type ScenarioSource = 'newSteps' | 'inlineSteps' | 'rawMarkdown' | 'empty';
+export type ScenarioSource = 'newSteps' | 'inlineSteps' | 'empty' | 'autotestRun';
+
+export type StepOrigin = 'editor' | 'text';
+
+export type StepExtra =
+  | { kind: 'link'; markdown: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'lost'; id: number }
+  | { kind: 'file'; markdown: string };
+
+export type StepExpected =
+  | { kind: 'items'; items: ScenarioStep[] }
+  | { kind: 'text'; text: string; rich: RichNode | null };
+
+export interface ScenarioStep {
+  origin: StepOrigin;
+  text: string;
+  rich: RichNode | null;
+  shared: boolean;
+  bare: boolean;
+  extras: StepExtra[];
+  expected: StepExpected | null;
+  children: ScenarioStep[];
+}
+
+export type Scenario =
+  | { kind: 'steps'; steps: ScenarioStep[] }
+  | { kind: 'empty'; fetchError: boolean }
+  | { kind: 'autotest'; steps: ScenarioStep[] };
 
 export interface TestCaseAttribute {
   name: string;
@@ -132,7 +169,6 @@ export interface TestCase {
   automated: boolean;
   layer: string;
   tags: string[];
-  links: string[];
 
   linkRefs: CaseLink[];
 
@@ -146,17 +182,23 @@ export interface TestCase {
 
   isLegacy: boolean;
 
-  declaredManual: boolean;
   description: string;
   precondition: string;
   expectedResult: string;
   scenarioSource: ScenarioSource;
 
+  scenario: Scenario;
+
   scenarioLines: string[];
 
-  scenarioRich?: (RichNode | null)[];
-
   comments: TestCaseComment[];
+
+  attachments: CaseAttachment[];
+}
+
+export interface CaseAttachment {
+  key: number;
+  path: string | null;
 }
 
 export interface CaseLink {

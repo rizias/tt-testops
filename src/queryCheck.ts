@@ -59,30 +59,14 @@ export function extractLayerValues(rql: string): string[] {
     if (value && !out.includes(value)) out.push(value);
   };
   for (const m of rql.matchAll(LAYER_EQUALITY)) {
-    const before = `${rql.slice(0, m.index ?? 0)}${m[1] ?? ''}`;
-    if (NEGATED_BEFORE.test(`${before.trimEnd()} `)) continue;
+    if (negated(rql, m)) continue;
     push(m[2] ?? '');
   }
   for (const m of rql.matchAll(LAYER_IN)) {
-    const before = `${rql.slice(0, m.index ?? 0)}${m[1] ?? ''}`;
-    if (NEGATED_BEFORE.test(`${before.trimEnd()} `)) continue;
+    if (negated(rql, m)) continue;
     for (const value of listValues(m[2] ?? '')) push(value);
   }
   return out;
-}
-
-function escaped(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-export function replaceValue(rql: string, field: string | null, from: string, to: string): string {
-  const owner = field === null ? 'layer' : `cf\\["${escaped(field)}"\\]`;
-  const condition = new RegExp(`(${owner}\\s*(?:=|in\\s*\\[)[^\\]]*?)"${escaped(from)}"`, 'gi');
-  return rql.replace(condition, `$1"${to.replace(/\$/g, '$$$$')}"`);
-}
-
-export function replaceFieldName(rql: string, from: string, to: string): string {
-  return rql.split(`cf["${from}"]`).join(`cf["${to}"]`);
 }
 
 type IdToken = { kind: 'number'; value: number } | { kind: 'symbol'; value: string };
@@ -187,10 +171,8 @@ export function findSimilar(wanted: string, candidates: string[]): string[] {
   return candidates.filter((c) => normalize(c) === key && c !== wanted);
 }
 
-export function describeChoices(similar: string[], all: string[], limit = 20): string {
+export function describeChoices(similar: string[], all: string[]): string {
   if (similar.length) return `Похоже на: ${similar.map((s) => `«${s}»`).join(', ')}.`;
   if (!all.length) return 'Доступных вариантов нет.';
-  const shown = all.slice(0, limit).join(', ');
-  const rest = all.length - limit;
-  return rest > 0 ? `Доступно: ${shown} и ещё ${rest}.` : `Доступно: ${shown}.`;
+  return `Доступно: ${all.join(', ')}.`;
 }

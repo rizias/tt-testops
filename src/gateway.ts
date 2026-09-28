@@ -1,120 +1,88 @@
-import { type SavedAttachment, attachmentsDirOf, saveEmbedded } from './attachmentFiles.js';
-import { type AssetDeps, attachmentText, embedAssets } from './assets.js';
-import { type AuditFinding, auditCase, scenarioStateOf } from './audit.js';
-import { CaseCache } from './cache.js';
+import { CaseFiles, copyAttachments, type SavedAttachment } from './attachmentFiles.js';
+import { type AssetDeps, embedAssets } from './assets.js';
+import { auditCase, scenarioStateOf } from './audit.js';
+import { AttachmentStore } from './attachmentStore.js';
 import { CaseFetcher } from './caseFetcher.js';
-import { type AppConfig, ProjectResolver } from './config.js';
-import { type ResolveDeps, renderBatchResolved, resolveToTestCase } from './contentResolver.js';
-import { countWithRepair } from './emptyResult.js';
-import { QueryError } from './errors.js';
+import { type AppConfig, resolveProject } from './config.js';
+import { type ResolveDeps, resolveToTestCase } from './contentResolver.js';
+import { buildFilterRows, type FilterRow } from './filterRows.js';
+import { countSources, fieldValues } from './gatewayCatalog.js';
 import { type HtmlCase, renderBatchHtml, renderCaseHtml } from './html.js';
-import { type JsonCase, toJson } from './json.js';
-import { buildFilterLink } from './links.js';
+import { filterBlock } from './htmlFilter.js';
 import type { RawCase, TestCase } from './model.js';
 import { defaultProfile, type FormatProfile } from './profile.js';
-import { idsOnly } from './queryCheck.js';
 import {
   type FoundValue,
   findValues,
-  isLayerField,
-  layerUsage,
   type ProjectOverview,
   type ProjectReport,
   projectOverview,
   projectReport,
 } from './reference.js';
-import { renderCase } from './render.js';
+import { renderBatch, renderCase } from './render.js';
+import { buildFilterLink } from './links.js';
 import type { Source } from './sources.js';
-import {
-  type CustomField,
-  type CustomFieldValue,
-  findFieldByName,
-  TestOpsClient,
-} from './testops/client.js';
+import { type CustomField, type CustomFieldValue, TestOpsClient } from './testops/client.js';
 import type { ProjectTree, TreeChoice } from './tree.js';
 import { TreeResolver } from './treeResolver.js';
 
 export type { ProjectOverview, ProjectReport } from './reference.js';
 
-function sharedAttachmentIds(cases: RawCase[]): Set<number> {
-  const out = new Set<number>();
-  for (const raw of cases) {
-    for (const att of Object.values(raw.steps?.sharedStepAttachments ?? {})) {
-      if (att && typeof att.id === 'number') out.add(att.id);
-    }
-  }
-  return out;
+interface Resolved {
+  tc: TestCase;
+  files: CaseFiles;
 }
+
+const embedded = (list: Resolved[]) => embedAssets(list.map((r) => r.files.contents(r.tc.attachments)));
 
 export class Gateway {
   private readonly client: TestOpsClient;
-  private readonly cache: CaseCache | null;
-  private readonly resolver: ProjectResolver;
+  private readonly store: AttachmentStore | null;
   private readonly trees: TreeResolver;
-  private readonly lostText = new Set<number>();
-  private readonly warnedProjects = new Set<number>();
   private readonly fetcher: CaseFetcher;
+  private filter: FilterRow[] = [];
   private readonly assets: AssetDeps;
 
   constructor(
     private readonly cfg: AppConfig,
     client: TestOpsClient | undefined = undefined,
     private readonly profile: FormatProfile = defaultProfile,
-    cache: CaseCache | null = null,
-    private readonly refresh = false,
+    store: AttachmentStore | null = null,
     private readonly onWarn: (message: string) => void = (m) =>
       process.stderr.write(`Предупреждение: ${m}\n`),
   ) {
-    this.cache = cache;
-    this.client = client ?? new TestOpsClient(cfg, undefined, undefined, onWarn, cache);
-    this.resolver = new ProjectResolver(cfg);
-    this.cache?.useServer(cfg.baseUrl);
+    this.store = store;
+    this.client = client ?? new TestOpsClient(cfg, undefined, onWarn, store);
     this.assets = {
       client: this.client,
-      cache: this.cache,
+      store: this.store,
+      baseUrl: cfg.baseUrl,
       onWarn: this.onWarn,
-      onLost: (id) => this.lostText.add(id),
     };
-    this.trees = new TreeResolver(
-      cfg,
-      this.client,
-      this.cache,
-      this.refresh,
-      this.resolver,
-      this.onWarn,
-    );
-    this.fetcher = new CaseFetcher(
-      cfg,
-      this.client,
-      this.cache,
-      this.refresh,
-      this.resolver,
-      this.onWarn,
-    );
+    this.trees = new TreeResolver(cfg, this.client, this.store, this.onWarn);
+    this.fetcher = new CaseFetcher(cfg, this.client, this.onWarn);
   }
 
-  static fromConfig(cfg: AppConfig, profile: FormatProfile = defaultProfile, refresh = false): Gateway {
-    return new Gateway(cfg, undefined, profile, new CaseCache(cfg.cacheDir), refresh);
+  static fromConfig(cfg: AppConfig, profile: FormatProfile): Gateway {
+    return new Gateway(cfg, undefined, profile, new AttachmentStore(cfg.profileDir));
   }
 
-  private deps(): ResolveDeps {
-    return {
-      fetchAttachment: (id, shared) => attachmentText(this.assets, id, shared),
+  private async resolve(raw: RawCase): Promise<Resolved> {
+    const project = Number(raw.overview.projectId);
+    const tree = Number.isFinite(project) ? await this.trees.working(project) : null;
+    const files = new CaseFiles(this.assets, String(raw.overview.id));
+    const deps: ResolveDeps = {
+      fetchAttachment: (id, shared) => files.text(id, shared),
       baseUrl: this.cfg.baseUrl,
       onWarn: this.onWarn,
-      onLost: (id) => this.lostText.add(id),
     };
-  }
-
-  private async resolve(raw: RawCase): Promise<TestCase> {
-    const project = Number(raw.overview.projectId);
-    if (Number.isFinite(project)) this.warnUnagreed(project);
-    const tree = Number.isFinite(project) ? await this.trees.working(project) : null;
-    return resolveToTestCase(raw, this.profile, this.deps(), tree);
+    const tc = await resolveToTestCase(raw, this.profile, deps, tree);
+    tc.attachments = await files.sync(tc);
+    return { tc, files };
   }
 
   projectIdOf(project?: string): number {
-    return this.resolver.resolve(project);
+    return resolveProject(this.cfg, project);
   }
 
   projectTrees(projectId: number): Promise<ProjectTree[]> {
@@ -125,52 +93,50 @@ export class Gateway {
     return this.trees.working(projectId);
   }
 
-  useTree(flag: TreeChoice, fromLinks: Record<string, number> = {}, required = false): void {
+  useTree(flag: TreeChoice, fromLinks: Record<string, number>, required: boolean): void {
     this.trees.use(flag, fromLinks, required);
-  }
-  lostAttachments(): number {
-    return this.lostText.size;
   }
 
   async getTestCase(id: string): Promise<string | null> {
     const raw = await this.fetcher.one(Number(id));
     if (!raw) return null;
-    const tc = await this.resolve(raw);
+    const { tc } = await this.resolve(raw);
     const marks = this.profile.showMarks ? auditCase(tc, raw).map((a) => a.message) : [];
-    return renderCase(tc, this.profile, marks);
-  }
-
-  async getTestCaseJson(id: string): Promise<{ case: JsonCase; audit: AuditFinding[] } | null> {
-    const raw = await this.fetcher.one(Number(id));
-    if (!raw) return null;
-    const tc = await this.resolve(raw);
-    return {
-      case: toJson(tc, scenarioStateOf(tc, raw), this.projectName(tc.projectId), this.profile),
-      audit: this.profile.showMarks ? auditCase(tc, raw) : [],
-    };
+    return renderCase(
+      tc,
+      this.profile,
+      marks,
+      this.cfg.baseUrl,
+      this.projectName(tc.projectId),
+      this.cfg.people,
+    );
   }
 
   async getTestCasesList(sources: Source[], limit?: number): Promise<string> {
     await this.trees.requireFor(sources.map((s) => s.project));
-    const cases = await this.fetcher.fetchSources(sources, limit);
+    const cases = await this.fetchWithFilter(sources, limit);
     if (!cases.length) return 'По данному запросу кейсов не найдено.';
-    return renderBatchResolved(cases, this.profile, this.deps(), (raw) => this.resolve(raw));
+    const resolved: TestCase[] = [];
+    for (const raw of cases) resolved.push((await this.resolve(raw)).tc);
+    return renderBatch(
+      cases,
+      this.profile,
+      this.cfg.baseUrl,
+      resolved,
+      (id) => this.projectName(id),
+      this.cfg.people,
+    );
   }
 
-  async searchCasesJson(
-    sources: Source[],
-    limit?: number,
-  ): Promise<{ cases: JsonCase[]; audit: AuditFinding[] }> {
-    await this.trees.requireFor(sources.map((s) => s.project));
+  filterRows(): FilterRow[] {
+    return this.filter;
+  }
+
+  private async fetchWithFilter(sources: Source[], limit?: number): Promise<RawCase[]> {
     const cases = await this.fetcher.fetchSources(sources, limit);
-    const out: JsonCase[] = [];
-    const findings: AuditFinding[] = [];
-    for (const raw of cases) {
-      const tc = await this.resolve(raw);
-      out.push(toJson(tc, scenarioStateOf(tc, raw), this.projectName(tc.projectId), this.profile));
-      if (this.profile.showMarks) findings.push(...auditCase(tc, raw));
-    }
-    return { cases: out, audit: findings };
+    const deps = { cfg: this.cfg, client: this.client, onWarn: this.onWarn };
+    this.filter = await buildFilterRows(deps, sources, (s) => this.fetcher.resultOf(s));
+    return cases;
   }
 
   private projectName(projectId: number | null): string | null {
@@ -178,34 +144,25 @@ export class Gateway {
   }
 
   async getTestCaseRaw(id: string): Promise<RawCase | null> {
-    const raw = await this.fetcher.one(Number(id));
-    if (raw) {
-      const project = Number(raw.overview.projectId);
-      if (Number.isFinite(project)) this.warnUnagreed(project);
-    }
-    return raw;
+    return this.fetcher.one(Number(id));
   }
 
   async saveAttachments(id: string, dir?: string): Promise<SavedAttachment[] | null> {
     const raw = await this.fetcher.one(Number(id));
     if (!raw) return null;
-    const tc = await this.resolve(raw);
-    const item = { tc, state: scenarioStateOf(tc, raw) };
-    const assets = await embedAssets(this.assets, [item], sharedAttachmentIds([raw]));
-    const target = dir ?? attachmentsDirOf(this.assets, tc.id);
-    if (target === null) return [];
-    return saveEmbedded(assets, target);
+    const { tc } = await this.resolve(raw);
+    return copyAttachments(tc.attachments, dir);
   }
 
   async getTestCaseHtml(id: string): Promise<string | null> {
     const raw = await this.fetcher.one(Number(id));
     if (!raw) return null;
-    const tc = await this.resolve(raw);
-    const item = { tc, state: scenarioStateOf(tc, raw) };
+    const resolved = await this.resolve(raw);
+    const { tc } = resolved;
     return renderCaseHtml(
-      item,
+      { tc, state: scenarioStateOf(tc, raw) },
       this.profile,
-      await embedAssets(this.assets, [item], sharedAttachmentIds([raw])),
+      embedded([resolved]),
       this.cfg.baseUrl,
       this.cfg.people,
     );
@@ -213,44 +170,23 @@ export class Gateway {
 
   async getTestCasesHtml(sources: Source[], limit?: number): Promise<string> {
     await this.trees.requireFor(sources.map((s) => s.project));
-    const cases = await this.fetcher.fetchSources(sources, limit);
+    const cases = await this.fetchWithFilter(sources, limit);
     const items: HtmlCase[] = [];
+    const resolved: Resolved[] = [];
     for (const raw of cases) {
-      const tc = await this.resolve(raw);
-      items.push({ tc, state: scenarioStateOf(tc, raw) });
+      const one = await this.resolve(raw);
+      resolved.push(one);
+      items.push({ tc: one.tc, state: scenarioStateOf(one.tc, raw) });
     }
     return renderBatchHtml(
       items,
       this.profile,
-      await embedAssets(this.assets, items, sharedAttachmentIds(cases)),
+      embedded(resolved),
       this.cfg.baseUrl,
       this.cfg.projects,
       this.cfg.people,
+      filterBlock(this.filter),
     );
-  }
-
-  warnUnagreed(project?: number | string): void {
-    let id: number;
-    try {
-      id = this.resolver.resolve(project);
-    } catch {
-      return;
-    }
-    if (this.warnedProjects.has(id) || Object.hasOwn(this.cfg.projects, String(id))) return;
-    this.warnedProjects.add(id);
-    this.onWarn(
-      `проект ${id} вне согласованного списка из конфигурации. Список — tt-testops projects`,
-    );
-  }
-
-  isAgreedProject(project?: number | string): boolean {
-    let id: string;
-    try {
-      id = String(this.resolver.resolve(project));
-    } catch {
-      return true;
-    }
-    return Object.hasOwn(this.cfg.projects, id);
   }
 
   projects(): Promise<ProjectReport> {
@@ -258,40 +194,26 @@ export class Gateway {
   }
 
   overview(project?: number | string): Promise<ProjectOverview> {
-    return projectOverview(this.client, this.resolver.resolve(project));
+    return projectOverview(this.client, resolveProject(this.cfg, project));
   }
 
   findValues(text: string, project?: number | string): Promise<FoundValue[]> {
-    return findValues(this.client, this.resolver.resolve(project), text);
+    return findValues(this.client, resolveProject(this.cfg, project), text);
   }
 
-  async countSources(sources: Source[]): Promise<Array<{ project: number; count: number }>> {
-    const out: Array<{ project: number; count: number }> = [];
-    for (const source of sources) {
-      if (idsOnly(source.rql)) {
-        throw new QueryError(
-          'count по идентификаторам не считается: у такого запроса нет проекта, а число берётся поиском в проекте. Возьмите list.',
-        );
-      }
-      const projectId = this.resolver.resolve(source.project);
-      const count = await countWithRepair(this.client, source.rql, projectId, this.onWarn);
-      out.push({ project: projectId, count });
-    }
-    return out;
+  countSources(sources: Source[]): Promise<Array<{ project: number; count: number }>> {
+    return countSources(this.cfg, this.client, sources);
   }
 
   fields(project?: number | string): Promise<CustomField[]> {
-    return this.client.fetchCustomFields(this.resolver.resolve(project));
+    return this.client.fetchCustomFields(resolveProject(this.cfg, project));
   }
 
-  async fieldValues(name: string, project?: number | string): Promise<CustomFieldValue[]> {
-    const projectId = this.resolver.resolve(project);
-    if (isLayerField(name)) return layerUsage(this.client, projectId);
-    const field = findFieldByName(await this.client.fetchCustomFields(projectId), name);
-    return this.client.fetchFieldValues(projectId, field.id);
+  fieldValues(name: string, project?: number | string): Promise<CustomFieldValue[]> {
+    return fieldValues(this.client, resolveProject(this.cfg, project), name);
   }
 
-  linkFor(rql: string, project?: number | string): string {
-    return buildFilterLink(this.cfg.baseUrl, this.resolver.resolve(project), rql);
+  linkFor(source: Source): string {
+    return buildFilterLink(this.cfg.baseUrl, resolveProject(this.cfg, source.project), source);
   }
 }

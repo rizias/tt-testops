@@ -3,6 +3,7 @@ import { type EmbeddedAssets, groupByPath, type HtmlCase, renderBatchHtml } from
 import type { RawLink, TestCase } from '../src/model.js';
 import { normalizeCase } from '../src/normalize.js';
 import { defaultProfile } from '../src/profile.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const assets: EmbeddedAssets = new Map();
 
@@ -10,24 +11,24 @@ const caseOf = (id: string, automated: boolean, path: string[], status = 'Active
   tc: {
     id,
     name: `Кейс ${id}`,
-    projectId: 14,
+    projectId: 1,
     path,
     status,
     automated,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
     relatedCases: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: '',
     precondition: '',
     expectedResult: '',
     scenarioSource: 'newSteps',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
     comments: [],
   } as TestCase,
@@ -37,9 +38,9 @@ const caseOf = (id: string, automated: boolean, path: string[], status = 'Active
 describe('сколько автоматизировано в разделе', () => {
   it('считает свои и вложенные кейсы', () => {
     const tree = groupByPath([
-      caseOf('1', true, ['Клиенты']),
-      caseOf('2', false, ['Клиенты']),
-      caseOf('3', true, ['Клиенты', 'Сделки']),
+      caseOf('1', true, ['Раздел А']),
+      caseOf('2', false, ['Раздел А']),
+      caseOf('3', true, ['Раздел А', 'Раздел Б']),
     ]);
     const clients = tree.children[0];
 
@@ -52,7 +53,7 @@ describe('сколько автоматизировано в разделе', ()
 
   it('ноль не показывается', () => {
     const html = renderBatchHtml(
-      [caseOf('1', true, ['Клиенты']), caseOf('2', true, ['Клиенты'])],
+      [caseOf('1', true, ['Раздел А']), caseOf('2', true, ['Раздел А'])],
       defaultProfile,
       assets,
     );
@@ -62,7 +63,7 @@ describe('сколько автоматизировано в разделе', ()
 
   it('оба значка с числами при смешанном разделе', () => {
     const html = renderBatchHtml(
-      [caseOf('1', true, ['Клиенты']), caseOf('2', false, ['Клиенты'])],
+      [caseOf('1', true, ['Раздел А']), caseOf('2', false, ['Раздел А'])],
       defaultProfile,
       assets,
     );
@@ -99,9 +100,9 @@ describe('адрес ссылки не теряется', () => {
   });
 
   it('ссылка показывается кликабельной', () => {
-    const one = caseOf('1', false, ['Клиенты']);
+    const one = caseOf('1', false, ['Раздел А']);
     one.tc.linkRefs = [{ name: 'https://example.test/x', url: 'https://example.test/x' }];
-    const html = renderBatchHtml([one, caseOf('2', false, ['Клиенты'])], defaultProfile, assets);
+    const html = renderBatchHtml([one, caseOf('2', false, ['Раздел А'])], defaultProfile, assets);
     expect(html).toContain('<a href="https://example.test/x"');
   });
 });
@@ -109,7 +110,7 @@ describe('адрес ссылки не теряется', () => {
 describe('состояние кейса в строке', () => {
   it('выведенный из работы отличим от рабочего', () => {
     const html = renderBatchHtml(
-      [caseOf('1', false, ['Клиенты'], 'Inactive'), caseOf('2', false, ['Клиенты'], 'Active')],
+      [caseOf('1', false, ['Раздел А'], 'Inactive'), caseOf('2', false, ['Раздел А'], 'Active')],
       defaultProfile,
       assets,
     );
@@ -121,7 +122,7 @@ describe('состояние кейса в строке', () => {
 
 describe('отметка текущего раздела', () => {
   const page = renderBatchHtml(
-    [caseOf('1', true, ['Клиенты', 'Сделки']), caseOf('2', false, ['Клиенты', 'Фиксации'])],
+    [caseOf('1', true, ['Раздел А', 'Раздел Б']), caseOf('2', false, ['Раздел А', 'Раздел В'])],
     defaultProfile,
     assets,
   );
@@ -144,7 +145,7 @@ describe('отметка текущего раздела', () => {
 
 describe('вид двумя колонками и уровни оглавления', () => {
   const page = renderBatchHtml(
-    [caseOf('1', true, ['Клиенты', 'Сделки']), caseOf('2', false, ['Клиенты', 'Фиксации'])],
+    [caseOf('1', true, ['Раздел А', 'Раздел Б']), caseOf('2', false, ['Раздел А', 'Раздел В'])],
     defaultProfile,
     assets,
     'https://testops.test',
@@ -178,7 +179,7 @@ describe('постраничная выборка', () => {
       fetchBatch: async (ids: number[]) =>
         ids.map(
           (id) =>
-            ({ overview: { id, projectId: 14 }, steps: null, comments: [] }) as unknown as never,
+            ({ overview: { id, projectId: 1 }, steps: null, comments: [] }) as unknown as never,
         ),
       fetchAttachmentContent: async () => '',
       fetchCustomFields: async () => [],
@@ -192,10 +193,6 @@ describe('постраничная выборка', () => {
         token: 't',
         projects: {},
         people: {},
-        timeoutMs: 1,
-        maxCases: 1000,
-        pageSize: 20,
-        sort: 'id,DESC',
       } as never,
       {
         get: async (url: string) => {
@@ -226,7 +223,7 @@ describe('постраничная выборка', () => {
     );
     void client;
 
-    const got = await real.searchAll('q', 14, 250, 100);
+    const got = await real.searchAll({ rql: 'q' }, 1, 250);
     expect(got.total).toBe(250);
     expect(got.hits).toHaveLength(250);
     expect(new Set(got.hits.map((h) => h.id)).size).toBe(250);

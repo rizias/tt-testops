@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { type ResolveDeps, renderResolved } from '../src/contentResolver.js';
-import { defaultProfile } from '../src/profile.js';
+import { type ResolveDeps, resolveToTestCase } from '../src/contentResolver.js';
+import type { RawCase } from '../src/model.js';
+import { defaultProfile, type FormatProfile } from '../src/profile.js';
+import { renderCase } from '../src/render.js';
 import {
   attachmentBodies,
   currentFormat,
@@ -9,6 +11,9 @@ import {
   imageOnStep,
   oldRawMarkdown,
 } from './fixtures.js';
+
+const renderResolved = async (raw: RawCase, p: FormatProfile, deps: ResolveDeps) =>
+  renderCase(await resolveToTestCase(raw, p, deps), p);
 
 const BASE = 'https://testops.example';
 

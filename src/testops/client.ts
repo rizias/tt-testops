@@ -1,16 +1,18 @@
-import type { CaseCache } from '../cache.js';
+import type { AttachmentStore } from '../attachmentStore.js';
 import type { AppConfig } from '../config.js';
-import { ApiError, QueryError } from '../errors.js';
-import type { RawCase, RawComment, RawOverview, RawRelation, RawStepData } from '../model.js';
+import { caseUnavailable, QueryError, skippable } from '../errors.js';
+import type {
+  RawCase,
+  RawComment,
+  RawOverview,
+  RawRelation,
+  RawRunScenario,
+  RawStepData,
+} from '../model.js';
+import { ownScenarioEmpty } from '../scenarioSource.js';
 import type { ProjectTree } from '../tree.js';
+import { type AttachmentResult, fetchAttachment } from './attachments.js';
 import {
-  type AttachmentResult,
-  fetchAttachment,
-  fetchAttachmentBytes,
-  type HttpContext,
-} from './attachments.js';
-import {
-  type CatalogContext,
   fetchLayers,
   fetchProjects,
   fetchTrees,
@@ -27,8 +29,14 @@ import {
   searchFieldValues,
 } from './fields.js';
 import { apiError } from './http.js';
-import { FetchPort, ResilientPort, type TestOpsPort } from './port.js';
-import { countCases, type SearchContext, type SearchHit, search, searchAll } from './search.js';
+import { FetchPort, type TestOpsPort } from './port.js';
+import {
+  countCases,
+  type SearchContext,
+  type SearchHit,
+  type SearchQuery,
+  searchAll,
+} from './search.js';
 import { TestOpsSession } from './session.js';
 
 export function findFieldByName(fields: CustomField[], name: string): CustomField {
@@ -45,19 +53,12 @@ export class TestOpsClient {
 
   constructor(
     private readonly cfg: AppConfig,
-    port: TestOpsPort = new FetchPort(cfg.timeoutMs),
-    sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    port: TestOpsPort = new FetchPort(),
     private readonly onWarn: (message: string) => void = () => {},
-    cache: CaseCache | null = null,
+    store: AttachmentStore | null = null,
     now: () => number = Date.now,
   ) {
-    const transport = new ResilientPort(port, {
-      retries: cfg.retries ?? 3,
-      concurrency: cfg.concurrency ?? 8,
-      sleep,
-      onWarn,
-    });
-    this.session = new TestOpsSession(cfg, transport, cache, onWarn, now);
+    this.session = new TestOpsSession(cfg, port, store, onWarn, now);
     this.port = this.session.port;
   }
 
@@ -74,17 +75,9 @@ export class TestOpsClient {
     return this.cfg.baseUrl.replace(/\/$/, '') + path;
   }
 
-  getJwt(): Promise<string> {
-    return this.session.getJwt();
-  }
-
-  private async authHeaders(accept = 'application/json'): Promise<Record<string, string>> {
-    return this.session.headers(accept);
-  }
-
   async fetchOverview(id: string): Promise<RawOverview | null> {
     const ovUrl = this.url(`/api/testcase/${id}/overview`);
-    const ov = await this.port.get(ovUrl, await this.authHeaders());
+    const ov = await this.port.get(ovUrl, await this.session.headers());
     if (ov.status === 404) {
       this.onWarn(`кейс ${id}: HTTP 404, ${ovUrl}`);
       return null;
@@ -98,56 +91,59 @@ export class TestOpsClient {
     let steps: RawStepData | null = null;
     if (overview.hasManualScenario) {
       const stUrl = this.url(`/api/testcase/${id}/step`);
-      const st = await this.port.get(stUrl, await this.authHeaders());
+      const st = await this.port.get(stUrl, await this.session.headers());
       if (st.ok) steps = (await st.json()) as RawStepData;
       else if (st.status !== 404) throw apiError(st.status, stUrl);
     }
     const comments = await this.secondary(id, 'комментарии', () => this.fetchComments(id));
     const relations = await this.secondary(id, 'связи', () => this.fetchRelations(id));
-    return { overview, steps, comments, relations };
+    const raw: RawCase = { overview, steps, comments, relations };
+    if (!ownScenarioEmpty(overview, steps)) return { ...raw, runScenario: null };
+    const runScenario = await this.secondary(id, 'сценарий из тестового результата', () =>
+      this.fetchRunScenario(id),
+    );
+    return runScenario === null ? raw : { ...raw, runScenario };
+  }
+
+  private async fetchRunScenario(id: string): Promise<RawRunScenario> {
+    const url = this.url(`/api/testcase/${id}/scenariofromrun`);
+    const r = await this.port.get(url, await this.session.headers());
+    if (r.status === 404) return { steps: [] };
+    if (!r.ok) throw apiError(r.status, url);
+    return (await r.json()) as RawRunScenario;
   }
 
   async fetchRelations(caseId: string | number): Promise<RawRelation[] | null> {
     const url = this.url(`/api/testcase/${caseId}/relation`);
-    const r = await this.port.get(url, await this.authHeaders());
+    const r = await this.port.get(url, await this.session.headers());
     if (r.status === 404) return null;
     if (!r.ok) throw apiError(r.status, url);
     const data = (await r.json()) as RawRelation[] | { content?: RawRelation[] };
     return Array.isArray(data) ? data : (data.content ?? []);
   }
 
-  async fetchCaseDetails(id: string): Promise<RawCase | null> {
-    const overview = await this.fetchOverview(id);
-    return overview ? this.fetchCaseFromOverview(overview) : null;
-  }
-
-  private searchCtx(): SearchContext {
+  private ctx(): SearchContext {
     return {
-      cfg: this.cfg,
       port: this.port,
       url: (p) => this.url(p),
-      authHeaders: (accept) => this.authHeaders(accept),
+      authHeaders: (accept) => this.session.headers(accept),
       explainRejectedQuery: (rql, projectId) => this.explainRejectedQuery(rql, projectId),
     };
   }
 
   searchAll(
-    rql: string,
+    query: SearchQuery,
     projectId: number,
     limit: number,
-    pageSize?: number,
   ): Promise<{ hits: SearchHit[]; total: number }> {
-    return searchAll(this.searchCtx(), rql, projectId, limit, pageSize);
+    return searchAll(this.ctx(), query, projectId, limit);
   }
 
-  search(rql: string, projectId: number, size: number, page = 0): Promise<SearchHit[]> {
-    return search(this.searchCtx(), rql, projectId, size, page);
-  }
-  async fetchComments(caseId: string | number, pageSize = 100): Promise<RawComment[] | null> {
-    const h = await this.authHeaders();
+  private async fetchComments(caseId: string | number): Promise<RawComment[] | null> {
+    const h = await this.session.headers();
     const out: RawComment[] = [];
     for (let page = 0; ; page++) {
-      const url = this.url(`/api/comment?testCaseId=${caseId}&page=${page}&size=${pageSize}`);
+      const url = this.url(`/api/comment?testCaseId=${caseId}&page=${page}&size=100`);
       const r = await this.port.get(url, h);
       if (r.status === 404) return null;
       if (!r.ok) throw apiError(r.status, url);
@@ -158,34 +154,20 @@ export class TestOpsClient {
     }
   }
 
-  private ctx(): HttpContext {
-    return {
-      port: this.port,
-      url: (p) => this.url(p),
-      authHeaders: (accept) => this.authHeaders(accept),
-    };
-  }
-
-  fetchAttachmentBytes(
-    attachmentId: number,
-    shared = false,
-  ): Promise<{ bytes: Buffer; contentType: string } | null> {
-    return fetchAttachmentBytes(this.ctx(), attachmentId, shared);
-  }
-
   fetchAttachment(attachmentId: number, shared = false): Promise<AttachmentResult> {
     return fetchAttachment(this.ctx(), attachmentId, shared);
   }
-  fetchProjects(size?: number): Promise<ServerProject[]> {
-    return fetchProjects(this.catalogCtx(), size);
+
+  fetchProjects(): Promise<ServerProject[]> {
+    return fetchProjects(this.ctx());
   }
 
-  fetchLayers(size?: number): Promise<TestLayer[]> {
-    return fetchLayers(this.catalogCtx(), size);
+  fetchLayers(): Promise<TestLayer[]> {
+    return fetchLayers(this.ctx());
   }
 
-  countCases(rql: string, projectId: number): Promise<number> {
-    return countCases(this.searchCtx(), rql, projectId);
+  countCases(query: SearchQuery, projectId: number): Promise<number> {
+    return countCases(this.ctx(), query, projectId);
   }
 
   fetchFieldValueCount(projectId: number, fieldId: number): Promise<number> {
@@ -196,33 +178,22 @@ export class TestOpsClient {
     projectId: number,
     fieldId: number,
     query: string,
-    pageSize?: number,
   ): Promise<CustomFieldValue[]> {
-    return searchFieldValues(this.ctx(), projectId, fieldId, query, pageSize);
+    return searchFieldValues(this.ctx(), projectId, fieldId, query);
   }
 
-  fetchTrees(projectId: number, size?: number): Promise<ProjectTree[]> {
-    return fetchTrees(this.catalogCtx(), projectId, size);
+  fetchTrees(projectId: number): Promise<ProjectTree[]> {
+    return fetchTrees(this.ctx(), projectId);
   }
 
-  private catalogCtx(): CatalogContext {
-    return {
-      port: this.port,
-      url: (p) => this.url(p),
-      authHeaders: (accept) => this.authHeaders(accept),
-    };
-  }
-  fetchCustomFields(projectId: number, pageSize?: number): Promise<CustomField[]> {
-    return fetchCustomFields(this.ctx(), projectId, pageSize);
+  fetchCustomFields(projectId: number): Promise<CustomField[]> {
+    return fetchCustomFields(this.ctx(), projectId);
   }
 
-  fetchFieldValues(
-    projectId: number,
-    fieldId: number,
-    pageSize?: number,
-  ): Promise<CustomFieldValue[]> {
-    return fetchFieldValues(this.ctx(), projectId, fieldId, pageSize);
+  fetchFieldValues(projectId: number, fieldId: number): Promise<CustomFieldValue[]> {
+    return fetchFieldValues(this.ctx(), projectId, fieldId);
   }
+
   private explainRejectedQuery(rql: string, projectId: number): Promise<string> {
     return explainRejectedQuery(
       { fetchCustomFields: (p) => this.fetchCustomFields(p) },
@@ -231,32 +202,34 @@ export class TestOpsClient {
     );
   }
 
-  async fetchBatch(ids: Array<string | number>): Promise<RawCase[]> {
+  async fetchBatch(
+    ids: Array<string | number>,
+    onReported?: (id: string | number) => void,
+  ): Promise<RawCase[]> {
     const out: RawCase[] = [];
-    const settled = await Promise.allSettled(ids.map((id) => this.fetchCaseDetails(String(id))));
-    for (const s of settled) {
+    const settled = await Promise.allSettled(
+      ids.map(async (id) => {
+        const overview = await this.fetchOverview(String(id));
+        return overview ? this.fetchCaseFromOverview(overview) : null;
+      }),
+    );
+    settled.forEach((s, i) => {
       if (s.status === 'fulfilled') {
         if (s.value) out.push(s.value);
-        continue;
+        return;
       }
       const error = s.reason;
-      if (error instanceof ApiError && (error.statusCode === 403 || error.statusCode === 404)) {
-        continue;
-      }
-      throw error;
-    }
+      if (skippable(error)) return;
+      if (!caseUnavailable(error)) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.onWarn(`кейс ${ids[i]}: получить не удалось — ${reason}`);
+      onReported?.(ids[i] as string | number);
+    });
     return out;
-  }
-
-  async fetchAttachmentContent(attachmentId: number, shared = false): Promise<string> {
-    const got = await fetchAttachment(this.ctx(), attachmentId, shared);
-    if (!got.ok) throw new ApiError(got.reason, 0, String(attachmentId), 'server');
-    return got.bytes.toString('utf8');
   }
 }
 
 export type { AttachmentResult } from './attachments.js';
 export type { ServerProject, TestLayer } from './catalog.js';
-
 export type { CustomField, CustomFieldValue } from './fields.js';
-export type { SearchHit } from './search.js';
+export type { SearchHit, SearchQuery } from './search.js';

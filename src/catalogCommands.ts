@@ -18,7 +18,6 @@ async function fieldsOutput(gw: Gateway, f: Flags): Promise<string> {
     if (!f.find.trim())
       throw new Error('Флагу --find нужно слово для поиска, пустая строка не подходит.');
     const found = await gw.findValues(f.find, project);
-    if (f.format === 'json') return JSON.stringify(found, null, 2);
     if (!found.length) {
       return `«${f.find}» не встречается ни в значениях полей, ни в слоях проекта ${gw.projectIdOf(project)}.`;
     }
@@ -26,11 +25,9 @@ async function fieldsOutput(gw: Gateway, f: Flags): Promise<string> {
   }
   const name = f._[0];
   if (name) {
-    const values = await gw.fieldValues(name, project);
-    return f.format === 'json' ? JSON.stringify(values, null, 2) : valueLines(values);
+    return valueLines(await gw.fieldValues(name, project));
   }
   const overview = await gw.overview(project);
-  if (f.format === 'json') return JSON.stringify(overview, null, 2);
   const lines = [`Поля проекта ${gw.projectIdOf(project)} — значений в каждом:`];
   for (const field of overview.fields) {
     lines.push(`${num(field.values)}  ${field.name}\tcf["${field.name}"]`);
@@ -48,9 +45,6 @@ async function treesOutput(gw: Gateway, f: Flags): Promise<string> {
   const project = gw.projectIdOf(f.projects[0]);
   const trees = await gw.projectTrees(project);
   const working = await gw.workingTreeOf(project);
-  if (f.format === 'json') {
-    return JSON.stringify({ project, working: working?.id ?? null, trees }, null, 2);
-  }
   if (!trees.length) {
     return `У проекта ${project} нет деревьев разделов: путь кейсов будет пустым.`;
   }
@@ -62,9 +56,8 @@ async function treesOutput(gw: Gateway, f: Flags): Promise<string> {
   return [`Деревья проекта ${project}:`, ...lines].join('\n');
 }
 
-async function projectsOutput(gw: Gateway, f: Flags): Promise<string> {
+async function projectsOutput(gw: Gateway): Promise<string> {
   const r = await gw.projects();
-  if (f.format === 'json') return JSON.stringify(r, null, 2);
   const mark = (onServer: boolean | null) =>
     onServer === null ? '?' : onServer ? 'есть' : 'НЕТ на сервере';
   const lines = ['Согласованный список (из конфигурации):'];
@@ -90,9 +83,8 @@ export async function catalogOutput(
 ): Promise<string> {
   if (cmd === 'fields') return fieldsOutput(gw, f);
   if (cmd === 'trees') return treesOutput(gw, f);
-  if (cmd === 'projects') return projectsOutput(gw, f);
+  if (cmd === 'projects') return projectsOutput(gw);
   const found = await counts();
-  if (f.format === 'json') return JSON.stringify(found, null, 2);
   if (found.length === 1 && found[0] !== undefined) return String(found[0].count);
   return found.map((c) => `${c.project}\t${c.count}`).join('\n');
 }

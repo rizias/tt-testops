@@ -9,18 +9,19 @@ import type { RawCase, RawLink, TestCase } from '../src/model.js';
 import { normalizeCase } from '../src/normalize.js';
 import { defaultProfile } from '../src/profile.js';
 import { cleanText } from '../src/text.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const caseOf = (over: Partial<TestCase> = {}): HtmlCase => ({
   tc: {
     id: '1',
     name: 'Кейс',
-    projectId: 14,
+    projectId: 1,
     path: [],
     status: 'Active',
     automated: false,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [{ name: 'user01', role: 'owner' }],
@@ -31,6 +32,7 @@ const caseOf = (over: Partial<TestCase> = {}): HtmlCase => ({
     precondition: '',
     expectedResult: '',
     scenarioSource: 'newSteps',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
     comments: [{ author: 'user01', body: 'Замечание', createdAt: '2026-01-01' }],
     ...over,
@@ -50,18 +52,18 @@ const caseOfR9 = (over: Partial<TestCase> = {}): HtmlCase => ({
     automated: false,
     layer: '',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
     relatedCases: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: '',
     precondition: '',
     expectedResult: '',
     scenarioSource: 'newSteps',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
     comments: [],
     ...over,
@@ -77,24 +79,24 @@ describe('карта людей', () => {
         tc: {
           id: '1',
           name: 'Кейс',
-          projectId: 14,
+          projectId: 1,
           path: [],
           status: 'Active',
           automated: false,
           layer: '',
           tags: [],
-          links: [],
+          attachments: [],
           linkRefs: [],
           issues: [],
           people: [],
           relatedCases: [],
           attributes: [],
           isLegacy: false,
-          declaredManual: false,
           description: '',
           precondition: '',
           expectedResult: '',
           scenarioSource: 'newSteps',
+          scenario: stepsOf('Шаг'),
           scenarioLines: ['1. Шаг'],
           comments: [{ id: '1', author: 'user.one', createdAt: '', body: 'текст' }],
         },
@@ -115,23 +117,23 @@ describe('несколько корневых разделов', () => {
     const { renderBatchHtml } = await import('../src/html.js');
     const base = {
       name: 'Кейс',
-      projectId: 14,
+      projectId: 1,
       status: 'Active',
       automated: false,
       layer: '',
       tags: [],
-      links: [],
+      attachments: [],
       linkRefs: [],
       issues: [],
       people: [],
       relatedCases: [],
       attributes: [],
       isLegacy: false,
-      declaredManual: false,
       description: '',
       precondition: '',
       expectedResult: '',
       scenarioSource: 'newSteps',
+      scenario: stepsOf('Шаг'),
       scenarioLines: ['1. Шаг'],
       comments: [],
     };
@@ -156,24 +158,24 @@ describe('отбор кейсов в дереве', () => {
       tc: {
         id,
         name,
-        projectId: 14,
+        projectId: 1,
         path: ['Раздел'],
         status: 'Active',
         automated: false,
         layer: '',
         tags: [],
-        links: [],
+        attachments: [],
         linkRefs: [],
         issues: [],
         people: [],
         relatedCases: [],
         attributes: [],
         isLegacy: false,
-        declaredManual: false,
         description: '',
         precondition: '',
         expectedResult: '',
         scenarioSource: 'newSteps',
+        scenario: stepsOf('Шаг'),
         scenarioLines: ['1. Шаг'],
         comments: [],
       },
@@ -256,7 +258,7 @@ describe('ссылки кейса', () => {
 
   it('ссылка в тексте сохраняется дословно', () => {
     const text = '[https://x.example/a](https://x.example/a)';
-    expect(cleanText(text, false)).toBe(text);
+    expect(cleanText(text)).toBe(text);
   });
 });
 
@@ -269,11 +271,11 @@ describe('кнопка копирования ссылки', () => {
 
   it('у кейса с проектом она есть и несёт настоящий адрес', () => {
     const html = renderCaseHtml(
-      caseOfR9({ projectId: 14 }),
+      caseOfR9({ projectId: 1 }),
       defaultProfile,
       assets,
       'https://ts.example',
     );
-    expect(html).toContain('https://ts.example/project/14/test-cases/10001');
+    expect(html).toContain('https://ts.example/project/1/test-cases/10001');
   });
 });

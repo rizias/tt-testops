@@ -1,18 +1,10 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
-export type AgentKind = 'claude' | 'codex' | 'agents';
-
-export type Templates =
-  | string
-  | { common: string; claude?: string; codex?: string; agents?: string };
-
-export type TargetId = 'global' | 'project' | 'custom';
+export type TargetId = 'project' | 'custom';
 
 export interface TargetOption {
   id: TargetId;
-  label: string;
   roots: string[];
 }
 
@@ -63,39 +55,35 @@ export type Registry = Record<string, RegistryEntry>;
 export interface InstallOptions {
   pkgName: string;
   version: string;
-  templates: Templates;
+  templates: string;
   stateDir: string;
   ask: Ask;
-  projectDir?: string;
+  projectDir: string;
 }
 
 export interface RefreshOptions {
   pkgName: string;
   version: string;
-  templates: Templates;
+  templates: string;
   stateDir: string;
-  quiet?: boolean;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const GLOBAL_SUFFIXES = ['.claude/skills', '.codex/skills', '.agents/skills'];
+const SKILLS_SUFFIXES = ['.claude/skills', '.codex/skills', '.agents/skills'];
 const PROJECT_SUFFIXES = ['.claude/skills', '.agents/skills'];
-const KIND_BY_SUFFIX: Record<string, AgentKind> = {
-  '.claude/skills': 'claude',
-  '.codex/skills': 'codex',
-  '.agents/skills': 'agents',
-};
 
 export const toSlash = (value: string): string => value.replace(/\\/g, '/');
 
-export const samePath = (a: string, b: string): boolean =>
-  process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+export function samePath(left: string, right: string): boolean {
+  const a = path.resolve(left);
+  const b = path.resolve(right);
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
 
 export const findPathKey = (paths: Record<string, number>, target: string): string | undefined =>
   Object.keys(paths).find((key) => samePath(key, target));
 
-export const note = (quiet: boolean | undefined, message: string): void => {
-  if (quiet === true) return;
+export const note = (message: string): void => {
   process.stderr.write(`\x1b[2m${message}\x1b[0m\n`);
 };
 
@@ -161,34 +149,22 @@ export const isSafeRelative = (relative: string): boolean =>
 const under = (base: string, suffixes: string[]): string[] =>
   suffixes.map((suffix) => path.join(base, ...suffix.split('/')));
 
-const globalBases = (): string[] => under(os.homedir(), GLOBAL_SUFFIXES);
-
 const projectBases = (projectDir: string): string[] =>
   under(path.resolve(projectDir), PROJECT_SUFFIXES);
-
-export const kindOfBase = (base: string): AgentKind => {
-  const asSlash = toSlash(base).replace(/\/+$/, '').toLowerCase();
-  for (const [suffix, kind] of Object.entries(KIND_BY_SUFFIX)) {
-    if (asSlash.endsWith(`/${suffix}`)) return kind;
-  }
-  return 'agents';
-};
 
 const customBase = (input: string): string => {
   const resolved = path.resolve(input);
   const asSlash = toSlash(resolved).replace(/\/+$/, '').toLowerCase();
-  const isSkillsDir = GLOBAL_SUFFIXES.some((suffix) => asSlash.endsWith(`/${suffix}`));
+  const isSkillsDir = SKILLS_SUFFIXES.some((suffix) => asSlash.endsWith(`/${suffix}`));
   return isSkillsDir ? resolved : path.join(resolved, '.claude', 'skills');
 };
 
 const targetOptions = (projectDir: string): TargetOption[] => [
-  { id: 'global', label: 'global (all agents on this machine)', roots: globalBases() },
-  { id: 'project', label: 'this project only', roots: projectBases(projectDir) },
-  { id: 'custom', label: 'a path you type', roots: [] },
+  { id: 'project', roots: projectBases(projectDir) },
+  { id: 'custom', roots: [] },
 ];
 
 export const basesFor = (choice: ChosenTarget, projectDir: string): string[] => {
-  if (choice.id === 'global') return globalBases();
   if (choice.id === 'project') return projectBases(projectDir);
   return choice.root === undefined ? [] : [customBase(choice.root)];
 };

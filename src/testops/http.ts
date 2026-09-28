@@ -1,4 +1,11 @@
 import { ApiError, type ApiErrorKind } from '../errors.js';
+import type { TestOpsPort } from './port.js';
+
+export interface HttpContext {
+  port: TestOpsPort;
+  url: (path: string) => string;
+  authHeaders: (accept?: string) => Promise<Record<string, string>>;
+}
 
 export function kindFor(status: number): ApiErrorKind {
   if (status === 401 || status === 403) return 'auth';

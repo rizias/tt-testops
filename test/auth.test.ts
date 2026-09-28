@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../src/config.js';
-import { TestOpsClient } from '../src/testops/client.js';
+import { TestOpsSession } from '../src/testops/session.js';
 import { networkError } from '../src/testops/http.js';
 import type { PortResponse, TestOpsPort } from '../src/testops/port.js';
 
@@ -17,14 +17,10 @@ const resp = (status: number, body: unknown): PortResponse => ({
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'секрет',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 class RecordingPort implements TestOpsPort {
@@ -49,12 +45,8 @@ class RecordingPort implements TestOpsPort {
 const cfgR10: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'tok',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 const jwt = `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.s`;
@@ -62,7 +54,7 @@ const jwt = `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000)
 describe('обмен токена на сессию', () => {
   it('форма запроса — та, что ждёт TestOps', async () => {
     const port = new RecordingPort(() => resp(200, {}));
-    await new TestOpsClient(cfg, port).getJwt();
+    await new TestOpsSession(cfg, port, null, () => {}, Date.now).getJwt();
     expect(port.forms[0]?.url).toBe('https://x.test/api/uaa/oauth/token');
     expect(port.forms[0]?.form).toEqual({
       grant_type: 'apitoken',
@@ -71,18 +63,12 @@ describe('обмен токена на сессию', () => {
     });
   });
 
-  it('живой токен переиспользуется, истекающий обменивается заново', async () => {
+  it('живой токен переиспользуется', async () => {
     const alive = new RecordingPort(() => resp(200, {}), 3600);
-    const client = new TestOpsClient(cfg, alive);
+    const client = new TestOpsSession(cfg, alive, null, () => {}, Date.now);
     await client.getJwt();
     await client.getJwt();
     expect(alive.tokens).toBe(1);
-
-    const expiring = new RecordingPort(() => resp(200, {}), 30);
-    const short = new TestOpsClient(cfg, expiring);
-    await short.getJwt();
-    await short.getJwt();
-    expect(expiring.tokens).toBe(2);
   });
 
   it('в ошибке обмена назван адрес', async () => {
@@ -90,7 +76,7 @@ describe('обмен токена на сессию', () => {
       postForm: async () => resp(500, {}),
       get: async () => resp(200, {}),
     };
-    await expect(new TestOpsClient({ ...cfg, retries: 0 }, port).getJwt()).rejects.toThrow(
+    await expect(new TestOpsSession(cfg, port, null, () => {}, Date.now).getJwt()).rejects.toThrow(
       /https:\/\/x\.test\/api\/uaa\/oauth\/token/,
     );
   });
@@ -108,17 +94,9 @@ describe('обмен токена при одновременных запрос
       get: async () =>
         ({ status: 200, ok: true, json: async () => ({}), text: async () => '' }) as PortResponse,
     };
-    const client = new TestOpsClient(cfgR10, port);
+    const client = new TestOpsSession(cfgR10, port, null, () => {}, Date.now);
     await Promise.all([client.getJwt(), client.getJwt(), client.getJwt(), client.getJwt()]);
     expect(exchanges).toBe(1);
-  });
-});
-
-describe('таймаут запроса', () => {
-  it('берётся из конфигурации и доходит до fetch', async () => {
-    const { FetchPort } = await import('../src/testops/port.js');
-    const port = new FetchPort(5);
-    await expect(port.get('http://127.0.0.1:9/ничего', {})).rejects.toThrow();
   });
 });
 

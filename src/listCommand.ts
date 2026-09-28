@@ -1,33 +1,24 @@
-import { sourcesOf, type Flags } from './args.js';
+import type { Flags } from './args.js';
+import { sourcesOf } from './querySources.js';
 import { catalogOutput } from './catalogCommands.js';
+import { filterLines } from './filterRows.js';
 import type { Gateway } from './gateway.js';
 import type { CommandResult } from './output.js';
 import { stampFor } from './report.js';
+
+function announceFilter(gw: Gateway): void {
+  for (const line of filterLines(gw.filterRows())) process.stderr.write(`${line}\n`);
+}
 
 export async function handleList(gw: Gateway, f: Flags): Promise<CommandResult> {
   const sources = sourcesOf(f);
   if (f.format === 'html') {
     const out = await gw.getTestCasesHtml(sources, f.limit);
+    announceFilter(gw);
     return { out, htmlName: `cases-${stampFor()}.html` };
   }
-  const out =
-    f.format === 'json'
-      ? JSON.stringify(await gw.searchCasesJson(sources, f.limit), null, 2)
-      : await gw.getTestCasesList(sources, f.limit);
-  return { out, htmlName: null };
-}
-
-export async function handleAudit(gw: Gateway, f: Flags): Promise<CommandResult> {
-  const found = await gw.searchCasesJson(sourcesOf(f), f.limit);
-  if (f.format === 'json') {
-    return { out: JSON.stringify(found.audit, null, 2), htmlName: null };
-  }
-  if (!found.cases.length) {
-    return { out: 'По данному запросу кейсов не найдено.', htmlName: null };
-  }
-  const out =
-    found.audit.map((a) => `${a.caseId}\t${a.severity}\t${a.message}`).join('\n') ||
-    `Пометок нет: проверено кейсов ${found.cases.length}.`;
+  const out = await gw.getTestCasesList(sources, f.limit);
+  announceFilter(gw);
   return { out, htmlName: null };
 }
 
@@ -38,10 +29,11 @@ export async function handleLink(gw: Gateway, f: Flags): Promise<CommandResult> 
       `link строит одну ссылку, а пар «проект + запрос» передано ${all.length}. Ссылка на выборку из нескольких проектов в TestOps невозможна.`,
     );
   const q = all[0] ?? { rql: '' };
-  if (!q.rql) throw new Error('link <запрос> required');
-  const url = gw.linkFor(q.rql, q.project);
-  const out = f.format === 'json' ? JSON.stringify({ url, rql: q.rql }, null, 2) : url;
-  return { out, htmlName: null };
+  const hasQuery = !!q.rql || !!q.conditions?.length || q.filterId !== undefined || !!q.text;
+  if (!hasQuery) {
+    throw new Error('Команде link нужен запрос: AQL, ссылка на фильтр TestOps или фраза --text.');
+  }
+  return { out: gw.linkFor(q), htmlName: null };
 }
 
 export async function handleCatalog(

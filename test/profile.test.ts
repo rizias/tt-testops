@@ -14,7 +14,6 @@ describe('loadProfile (external format config)', () => {
     writeFileSync(
       p,
       JSON.stringify({
-        contractVersion: '2.0',
         sections: { scenario: '## Шаги' },
         customFields: { hide: ['Smoke'] },
       }),
@@ -28,19 +27,9 @@ describe('loadProfile (external format config)', () => {
   });
 
 
-  it('отказывается стартовать, когда исторический профиль переименовал раздел', () => {
-    const p = join(tmpdir(), '_tt_profile_section.json');
-    writeFileSync(p, JSON.stringify({ sections: { description: '### Что проверяем' } }));
-    expect(() => loadProfile(p)).toThrow(/sections\.description/);
-    rmSync(p);
-  });
-
-  it('тот же раздел переименовывается свободно, когда профиль объявил свою версию', () => {
+  it('раздел переименовывается профилем', () => {
     const p = join(tmpdir(), '_tt_profile_own.json');
-    writeFileSync(
-      p,
-      JSON.stringify({ contractVersion: '2.0', sections: { description: '### Что проверяем' } }),
-    );
+    writeFileSync(p, JSON.stringify({ sections: { description: '### Что проверяем' } }));
     expect(loadProfile(p).sections.description).toBe('### Что проверяем');
     rmSync(p);
   });

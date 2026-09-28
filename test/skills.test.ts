@@ -37,6 +37,13 @@ afterEach(() => {
 const destination = () => join(project, '.claude', 'skills', 'tt-testops');
 const template = () => join(templates, 'tt-testops');
 const registryFile = () => join(stateDir, 'skills-registry.json');
+const SHIPPED = [
+  'SKILL.md',
+  'references/aql.md',
+  'references/commands.md',
+  'references/format.md',
+  'references/settings.md',
+];
 
 function ask(confirm = true): Ask {
   return {
@@ -75,7 +82,7 @@ function changeTemplateStamp(version: string): void {
   writeFileSync(file, text, 'utf8');
 }
 
-describe('мастерская установки скиллов', () => {
+describe('установка скиллов', () => {
   it('пишет реестр и копию, равную шаблону, по указанному пути', async () => {
     const report = await installSkills(options('0.1.0'));
     expect(report.installed).toEqual([destination().replace(/\\/g, '/')]);
@@ -86,8 +93,11 @@ describe('мастерская установки скиллов', () => {
     expect(registry['tt-testops'].version).toBe('0.1.0');
     expect(registry['tt-testops'].skills['tt-testops'][0]).toEqual({
       path: destination().replace(/\\/g, '/'),
-      files: ['SKILL.md'],
+      files: SHIPPED,
     });
+    for (const file of SHIPPED) {
+      expect(readFileSync(join(destination(), file))).toEqual(readFileSync(join(template(), file)));
+    }
   });
 
   it('без подтверждения не создаёт копию и реестр', async () => {
@@ -155,17 +165,40 @@ describe('мастерская установки скиллов', () => {
     expect(readFileSync(foreign, 'utf8')).toBe('чужой файл');
   });
 
+  it('убирает из копии дополнение, которое пакет больше не поставляет, и не трогает файл пользователя', async () => {
+    await installSkills(options('0.1.0'));
+    const own = join(destination(), 'notes.md');
+    writeFileSync(own, 'заметки пользователя', 'utf8');
+    rmSync(join(template(), 'references', 'aql.md'));
+    changeTemplateStamp('0.2.0');
+
+    const report = maybeRefreshSkills({
+      pkgName: 'tt-testops',
+      version: '0.2.0',
+      templates,
+      stateDir,
+    });
+    expect(report.refreshed).toEqual([destination().replace(/\\/g, '/')]);
+    expect(existsSync(join(destination(), 'references', 'aql.md'))).toBe(false);
+    expect(readFileSync(join(destination(), 'references', 'settings.md'))).toEqual(
+      readFileSync(join(template(), 'references', 'settings.md')),
+    );
+    expect(readFileSync(own, 'utf8')).toBe('заметки пользователя');
+    const registry = JSON.parse(readFileSync(registryFile(), 'utf8'));
+    expect(registry['tt-testops'].skills['tt-testops'][0].files).toEqual(
+      SHIPPED.filter((file) => file !== 'references/aql.md'),
+    );
+  });
+
   it('asks for project or custom skill destination without a global option', async () => {
     const prompts: string[] = [];
     const writes = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const targetOptions: TargetOption[] = [
-      { id: 'global', label: 'global', roots: ['/global'] },
       {
         id: 'project',
-        label: 'project',
         roots: [join(project, '.claude', 'skills'), join(project, '.agents', 'skills')],
       },
-      { id: 'custom', label: 'custom', roots: [] },
+      { id: 'custom', roots: [] },
     ];
     const choose = (answers: string[]) =>
       createAsk(stubTerminal(answers, prompts), project).chooseTargets({

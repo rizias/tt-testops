@@ -1,4 +1,4 @@
-import type { CaseCache } from '../cache.js';
+import type { AttachmentStore } from '../attachmentStore.js';
 import type { AppConfig } from '../config.js';
 import { AuthError } from '../errors.js';
 import type { StoredSession } from '../sessionStore.js';
@@ -27,7 +27,7 @@ export class TestOpsSession {
   constructor(
     private readonly cfg: AppConfig,
     private readonly transport: TestOpsPort,
-    private readonly cache: CaseCache | null,
+    private readonly store: AttachmentStore | null,
     private readonly onWarn: (message: string) => void,
     private readonly now: () => number,
   ) {
@@ -52,7 +52,7 @@ export class TestOpsSession {
   }
 
   private usable(session: StoredSession | null): session is StoredSession {
-    return session !== null && session.expiresAt - this.now() >= 60_000;
+    return session !== null && (session.expiresAt === null || session.expiresAt > this.now());
   }
 
   private async getWithRecovery(
@@ -81,18 +81,18 @@ export class TestOpsSession {
 
   private refresh(rejected?: string): Promise<string> {
     const update = async () => {
-      const saved = this.cache?.getSession(this.cfg.baseUrl, this.cfg.token) ?? null;
+      const saved = this.store?.getSession(this.cfg.baseUrl, this.cfg.token) ?? null;
       if (this.usable(saved) && saved.token !== rejected) {
         this.current = saved;
         return saved.token;
       }
       const fresh = await this.exchange();
-      this.cache?.putSession(this.cfg.baseUrl, this.cfg.token, fresh);
+      this.store?.putSession(this.cfg.baseUrl, this.cfg.token, fresh);
       this.current = fresh;
       return fresh.token;
     };
-    return this.cache
-      ? this.cache.withSessionLock(update, () =>
+    return this.store
+      ? this.store.withSessionLock(update, () =>
           this.onWarn('ожидание чужого обмена токена: хранилище занято'),
         )
       : update();
@@ -117,7 +117,7 @@ export class TestOpsSession {
     if (!data.access_token) throw new AuthError('Ответ обмена JWT не содержит access_token');
     return {
       token: data.access_token,
-      expiresAt: decodeExpMs(data.access_token) ?? this.now() + 55 * 60_000,
+      expiresAt: decodeExpMs(data.access_token),
     };
   }
 }

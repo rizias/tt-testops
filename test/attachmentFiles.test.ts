@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { extensionFor, saveEmbedded } from '../src/attachmentFiles.js';
-import { CaseCache } from '../src/cache.js';
+import { extensionFor } from '../src/attachmentFiles.js';
+import { AttachmentStore } from '../src/attachmentStore.js';
 import type { AppConfig } from '../src/config.js';
 import { Gateway } from '../src/gateway.js';
 import type { RawCase, RawOverview } from '../src/model.js';
@@ -12,14 +12,10 @@ import type { TestOpsClient } from '../src/testops/client.js';
 const cfg: AppConfig = {
   baseUrl: 'https://testops.example',
   token: 'tok',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 const PIXEL = Buffer.from('89504e470d0a1a0a', 'hex');
@@ -40,31 +36,12 @@ describe('имя файла говорит, чем его открыть', () =>
     expect(extensionFor('text/markdown')).toBe('.md');
     expect(extensionFor('application/octet-stream')).toBe('.bin');
   });
-
-  it('встроенные вложения ложатся файлами по номеру', () => {
-    const assets = new Map([
-      [7, `data:image/png;base64,${PIXEL.toString('base64')}`],
-      [9, 'data:text/markdown;base64,0YLQtdC60YHRgg=='],
-    ]);
-    const saved = saveEmbedded(assets, dir);
-
-    expect(saved.map((s) => s.id)).toEqual([7, 9]);
-    expect(readdirSync(dir).sort()).toEqual(['7.png', '9.md']);
-    expect(readFileSync(join(dir, '7.png')).equals(PIXEL)).toBe(true);
-    expect(readFileSync(join(dir, '9.md'), 'utf8')).toBe('текст');
-  });
-
-  it('пустой список каталога не создаёт', () => {
-    const empty = join(dir, 'нет-вложений');
-    expect(saveEmbedded(new Map(), empty)).toEqual([]);
-    expect(readdirSync(dir)).toEqual([]);
-  });
 });
 
 describe('кейс отдаётся вместе с вложениями', () => {
   const overview = {
     id: 10001,
-    projectId: 14,
+    projectId: 1,
     name: 'Кейс с картинкой',
     lastModifiedDate: 1,
     hasManualScenario: false,
@@ -86,22 +63,21 @@ describe('кейс отдаётся вместе с вложениями', () =>
       cfg,
       client,
       undefined,
-      new CaseCache(join(dir, 'cache')),
-      false,
+      new AttachmentStore(join(dir, 'profile')),
       () => {},
     );
     const saved = await gw.saveAttachments('10001', join(dir, 'выгрузка'));
 
-    expect(saved).toEqual([{ id: 555, path: join(dir, 'выгрузка', '555.png') }]);
+    expect(saved).toEqual([{ key: 555, path: join(dir, 'выгрузка', '555.png') }]);
     expect(readFileSync(join(dir, 'выгрузка', '555.png')).equals(PIXEL)).toBe(true);
   });
 
   it('без каталога файлы ложатся в хранилище профиля, рядом с кейсом', async () => {
-    const cache = new CaseCache(join(dir, 'cache'));
-    const gw = new Gateway(cfg, client, undefined, cache, false, () => {});
+    const store = new AttachmentStore(join(dir, 'profile'));
+    const gw = new Gateway(cfg, client, undefined, store, () => {});
     const saved = await gw.saveAttachments('10001');
 
-    expect(saved?.[0]?.path).toBe(join(cache.filesRoot(), 'case-10001', '555.png'));
+    expect(saved).toEqual([{ key: 555, path: join(dir, 'profile', 'attachments', 'case-10001', '555.png') }]);
   });
 
   it('кейса нет — ответа нет, каталог не создан', async () => {
@@ -113,8 +89,7 @@ describe('кейс отдаётся вместе с вложениями', () =>
       cfg,
       missing,
       undefined,
-      new CaseCache(join(dir, 'cache')),
-      false,
+      new AttachmentStore(join(dir, 'profile')),
       () => {},
     );
 

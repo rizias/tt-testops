@@ -2,23 +2,19 @@ import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../src/config.js';
 import { Gateway } from '../src/gateway.js';
 import { type EmbeddedAssets, type HtmlCase, renderBatchHtml } from '../src/html.js';
-import { toJson } from '../src/json.js';
 import type { RawCase, RawOverview, TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
 import type { TestOpsClient } from '../src/testops/client.js';
 import type { ProjectTree } from '../src/tree.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const cfg: AppConfig = {
   baseUrl: 'https://ts.example',
   token: 'tok',
-  defaultProjectId: 14,
-  projects: { '14': 'WEB' },
+  defaultProjectId: 1,
+  projects: { '1': 'WEB' },
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 const TREE: ProjectTree = {
@@ -33,7 +29,7 @@ const TREE: ProjectTree = {
 const overview = (id: number): RawOverview =>
   ({
     id,
-    projectId: 14,
+    projectId: 1,
     name: `Кейс ${id}`,
     lastModifiedDate: 1,
     customFields: [
@@ -66,24 +62,24 @@ const caseOf = (over: Partial<TestCase> = {}): HtmlCase => ({
   tc: {
     id: '10001',
     name: 'Кейс',
-    projectId: 14,
+    projectId: 1,
     path: [],
     status: 'Active',
     automated: false,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
     relatedCases: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: '',
     precondition: '',
     expectedResult: '',
     scenarioSource: 'newSteps',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
     comments: [],
     ...over,
@@ -95,7 +91,7 @@ describe('пометки в одиночном Markdown', () => {
   const withTestRail = {
     overview: {
       id: 1,
-      projectId: 14,
+      projectId: 1,
       name: 'Кейс',
       hasManualScenario: false,
       scenario: { steps: [{ name: 'Шаг' }] },
@@ -112,7 +108,7 @@ describe('пометки в одиночном Markdown', () => {
   } as unknown as TestOpsClient;
 
   it('ссылка на постороннюю систему выведена ссылкой, без пометки', async () => {
-    const gw = new Gateway(cfg, client, undefined, null, false, () => {});
+    const gw = new Gateway(cfg, client, undefined, null, () => {});
     const out = await gw.getTestCase('1');
     expect(out).toContain('- **Ссылки:** [TestRail](https://testrail.example/case/1)');
     expect(out).not.toContain('Ссылка на TestRail');
@@ -124,7 +120,6 @@ describe('пометки в одиночном Markdown', () => {
       client,
       { ...defaultProfile, showMarks: false },
       null,
-      false,
       () => {},
     );
     const out = await gw.getTestCase('1');
@@ -132,42 +127,10 @@ describe('пометки в одиночном Markdown', () => {
   });
 });
 
-describe('пометки выключены', () => {
-  it('состояния сценария в структурном выводе нет', () => {
-    const tc = {
-      id: '1',
-      name: 'Кейс',
-      projectId: 14,
-      path: [],
-      status: 'Active',
-      automated: false,
-      layer: 'Web',
-      tags: [],
-      links: [],
-      linkRefs: [],
-      issues: [],
-      people: [],
-      relatedCases: [],
-      attributes: [],
-      isLegacy: false,
-      description: '',
-      precondition: '',
-      expectedResult: '',
-      scenarioSource: 'newSteps',
-      scenarioLines: [],
-      comments: [],
-    } as never;
-    expect(
-      toJson(tc, 'current', 'WEB', { ...defaultProfile, showMarks: false }),
-    ).not.toHaveProperty('scenarioState');
-    expect(toJson(tc, 'current', 'WEB', defaultProfile)).toHaveProperty('scenarioState', 'current');
-  });
-});
-
 describe('путь кейса в пакетном Markdown', () => {
   it('берётся из рабочего дерева, а не пропадает', async () => {
-    const gw = new Gateway(cfg, client(), undefined, null, false, () => {});
-    const out = await gw.getTestCasesList([{ project: '14', rql: 'automation = false' }]);
+    const gw = new Gateway(cfg, client(), undefined, null, () => {});
+    const out = await gw.getTestCasesList([{ project: '1', rql: 'automation = false' }]);
     expect(out).toContain('- **Путь:** `Раздел А` → `Раздел Б`');
   });
 });
@@ -190,11 +153,11 @@ describe('сводка над списком', () => {
 });
 
 describe('кейс по идентификатору', () => {
-  it('берётся из хранилища, когда дата не менялась', async () => {
+  it('тело запрашивается у сервера при каждом обращении', async () => {
     let bodies = 0;
     const overview = {
       id: 1,
-      projectId: 14,
+      projectId: 1,
       name: 'Кейс',
       lastModifiedDate: 7,
     } as unknown as RawOverview;
@@ -202,37 +165,39 @@ describe('кейс по идентификатору', () => {
       fetchOverview: async () => overview,
       fetchCaseFromOverview: async () => {
         bodies++;
-        return { overview, steps: null, comments: [] } as unknown as RawCase;
+        return { overview, steps: null, runScenario: { steps: [] }, comments: [] } as unknown as RawCase;
       },
       fetchTrees: async () => [],
     } as unknown as TestOpsClient;
 
-    const store = new (await import('../src/cache.js')).CaseCache(
+    const store = new (await import('../src/attachmentStore.js')).AttachmentStore(
       (await import('node:fs')).mkdtempSync(
         (await import('node:path')).join((await import('node:os')).tmpdir(), 'tt-one-'),
       ),
     );
-    const gw = new Gateway(cfg, client, undefined, store, false, () => {});
+    const gw = new Gateway(cfg, client, undefined, store, () => {});
     await gw.getTestCase('1');
     await gw.getTestCase('1');
-    expect(bodies).toBe(1);
+    expect(bodies).toBe(2);
   });
 });
 
 describe('сводка пачки для кейса без проекта', () => {
   it('обходится без ссылки, а не строит адрес с дыркой', async () => {
-    const { renderBatchResolved } = await import('../src/contentResolver.js');
-    const out = await renderBatchResolved(
-      [
-        {
-          overview: { id: 10001, name: 'Кейс', hasManualScenario: false, scenario: { steps: [] } },
-          steps: null,
-          comments: [],
-        } as unknown as RawCase,
-      ],
-      defaultProfile,
-      { fetchAttachment: async () => '', baseUrl: 'https://ts.example' },
+    const { resolveToTestCase } = await import('../src/contentResolver.js');
+    const { renderBatch } = await import('../src/render.js');
+    const cases = [
+      {
+        overview: { id: 10001, name: 'Кейс', hasManualScenario: false, scenario: { steps: [] } },
+        steps: null,
+        comments: [],
+      } as unknown as RawCase,
+    ];
+    const deps = { fetchAttachment: async () => '', baseUrl: 'https://ts.example' };
+    const resolved = await Promise.all(
+      cases.map((raw) => resolveToTestCase(raw, defaultProfile, deps)),
     );
+    const out = renderBatch(cases, defaultProfile, deps.baseUrl, resolved, () => null, {});
     expect(out).not.toContain('/project//');
   });
 });

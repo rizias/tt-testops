@@ -1,4 +1,4 @@
-import { humanSize } from './cache.js';
+import { humanSize } from './attachmentStore.js';
 
 export function stampFor(now: Date = new Date()): string {
   const two = (n: number) => String(n).padStart(2, '0');
@@ -9,8 +9,4 @@ export function stampFor(now: Date = new Date()): string {
 
 export function exportReport(fullPath: string, bytes: number, spentMs: number): string {
   return `Записан файл: ${fullPath} — ${humanSize(bytes)}, ${(spentMs / 1000).toFixed(1)} с`;
-}
-
-export function lostReport(count: number): string | null {
-  return count > 1 ? `не скачалось вложений: ${count}` : null;
 }

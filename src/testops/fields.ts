@@ -1,5 +1,4 @@
-import type { HttpContext } from './attachments.js';
-import { apiError } from './http.js';
+import { apiError, type HttpContext } from './http.js';
 
 export interface CustomField {
   id: number;
@@ -14,12 +13,11 @@ export interface CustomFieldValue {
 export async function fetchCustomFields(
   ctx: HttpContext,
   projectId: number,
-  pageSize = 200,
 ): Promise<CustomField[]> {
   const h = await ctx.authHeaders();
   const out: CustomField[] = [];
   for (let page = 0; ; page++) {
-    const url = ctx.url(`/api/project/${projectId}/cf?page=${page}&size=${pageSize}`);
+    const url = ctx.url(`/api/project/${projectId}/cf?page=${page}&size=200`);
     const r = await ctx.port.get(url, h);
     if (!r.ok) throw apiError(r.status, url);
     const data = (await r.json()) as
@@ -52,23 +50,27 @@ export async function searchFieldValues(
   projectId: number,
   fieldId: number,
   query: string,
-  pageSize = 50,
 ): Promise<CustomFieldValue[]> {
   const h = await ctx.authHeaders();
-  const url = ctx.url(
-    `/api/cfv?projectId=${projectId}&customFieldId=${fieldId}&query=${encodeURIComponent(
-      query,
-    )}&page=0&size=${pageSize}`,
-  );
-  const r = await ctx.port.get(url, h);
-  if (!r.ok) throw apiError(r.status, url);
-  const data = (await r.json()) as {
-    content?: Array<{ name?: string; testCasesCount?: number }>;
-  };
   const out: CustomFieldValue[] = [];
-  for (const v of data.content ?? [])
-    if (typeof v.name === 'string')
-      out.push({ name: v.name, testCasesCount: v.testCasesCount ?? 0 });
+  for (let page = 0; ; page++) {
+    const url = ctx.url(
+      `/api/cfv?projectId=${projectId}&customFieldId=${fieldId}&query=${encodeURIComponent(
+        query,
+      )}&page=${page}&size=200`,
+    );
+    const r = await ctx.port.get(url, h);
+    if (!r.ok) throw apiError(r.status, url);
+    const data = (await r.json()) as {
+      content?: Array<{ name?: string; testCasesCount?: number }>;
+      totalPages?: number;
+    };
+    const list = data.content ?? [];
+    for (const v of list)
+      if (typeof v.name === 'string')
+        out.push({ name: v.name, testCasesCount: v.testCasesCount ?? 0 });
+    if (page + 1 >= (data.totalPages ?? 1) || !list.length) break;
+  }
   return out.sort((a, b) => b.testCasesCount - a.testCasesCount);
 }
 
@@ -76,13 +78,12 @@ export async function fetchFieldValues(
   ctx: HttpContext,
   projectId: number,
   fieldId: number,
-  pageSize = 200,
 ): Promise<CustomFieldValue[]> {
   const h = await ctx.authHeaders();
   const out: CustomFieldValue[] = [];
   for (let page = 0; ; page++) {
     const url = ctx.url(
-      `/api/cfv?projectId=${projectId}&customFieldId=${fieldId}&page=${page}&size=${pageSize}`,
+      `/api/cfv?projectId=${projectId}&customFieldId=${fieldId}&page=${page}&size=200`,
     );
     const r = await ctx.port.get(url, h);
     if (!r.ok) throw apiError(r.status, url);

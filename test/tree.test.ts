@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CaseCache } from '../src/cache.js';
+import { AttachmentStore } from '../src/attachmentStore.js';
 import type { AppConfig } from '../src/config.js';
 import { Gateway } from '../src/gateway.js';
 import { parseFilterLink } from '../src/links.js';
@@ -10,6 +10,7 @@ import type { RawCase, RawOverview } from '../src/model.js';
 import type { TestOpsClient } from '../src/testops/client.js';
 import { type ProjectTree, pickTree, treePath } from '../src/tree.js';
 import { parseFlags } from '../src/args.js';
+import { listedIds } from './listedCases.js';
 
 const wide: ProjectTree = {
   id: 41,
@@ -111,13 +112,7 @@ const cfg: AppConfig = {
   projects: { '7': 'Демо' },
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  concurrency: 8,
-  retries: 3,
-  pageSize: 20,
-  sort: 'id,DESC',
-  cacheDir: '/tmp/tt-test-cache',
+  profileDir: '/tmp/tt-test-profile',
 };
 
 const overviewOf = (id: number): RawOverview =>
@@ -155,33 +150,20 @@ describe('список деревьев и хранилище', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('второй вызов берёт список из хранилища', async () => {
+  it('второй запуск команды снова запрашивает список деревьев', async () => {
     const log = { calls: 0 };
-    const cache = new CaseCache(dir);
-    const make = () => new Gateway(cfg, clientWith([wide], log), undefined, cache, false, () => {});
+    const store = new AttachmentStore(dir);
+    const make = () => new Gateway(cfg, clientWith([wide], log), undefined, store, () => {});
 
     await make().getTestCase('1');
     await make().getTestCase('2');
-
-    expect(log.calls).toBe(1);
-  });
-
-  it('флаг --refresh перечитывает список заново', async () => {
-    const log = { calls: 0 };
-    const cache = new CaseCache(dir);
-    await new Gateway(cfg, clientWith([wide], log), undefined, cache, false, () => {}).getTestCase(
-      '1',
-    );
-    await new Gateway(cfg, clientWith([wide], log), undefined, cache, true, () => {}).getTestCase(
-      '2',
-    );
 
     expect(log.calls).toBe(2);
   });
 
   it('внутри одного вызова список запрашивается один раз на проект', async () => {
     const log = { calls: 0 };
-    const gw = new Gateway(cfg, clientWith([wide], log), undefined, null, false, () => {});
+    const gw = new Gateway(cfg, clientWith([wide], log), undefined, null, () => {});
 
     await gw.getTestCase('1');
     await gw.getTestCase('2');
@@ -191,7 +173,7 @@ describe('список деревьев и хранилище', () => {
   });
 
   it('деревьев несколько без выбора — case останавливается с перечнем деревьев и способов', async () => {
-    const gw = new Gateway(cfg, clientWith([wide, behaviors], { calls: 0 }), undefined, null, false, () => {});
+    const gw = new Gateway(cfg, clientWith([wide, behaviors], { calls: 0 }), undefined, null, () => {});
     gw.useTree(null, {}, true);
 
     const failure = await gw.getTestCase('1').then(
@@ -215,16 +197,16 @@ describe('список деревьев и хранилище', () => {
         return { items: [], total: 0 };
       },
     } as unknown as TestOpsClient;
-    const gw = new Gateway(cfg, client, undefined, null, false, () => {});
+    const gw = new Gateway(cfg, client, undefined, null, () => {});
     gw.useTree(null, {}, true);
 
-    await expect(gw.getTestCasesList([{ project: '14', rql: 'id > 0' }])).rejects.toThrow(
+    await expect(gw.getTestCasesList([{ project: '1', rql: 'id > 0' }])).rejects.toThrow(
       'не выбрано рабочее дерево разделов',
     );
-    await expect(gw.getTestCasesHtml([{ project: '14', rql: 'id > 0' }])).rejects.toThrow(
+    await expect(gw.getTestCasesHtml([{ project: '1', rql: 'id > 0' }])).rejects.toThrow(
       'не выбрано рабочее дерево разделов',
     );
-    await expect(gw.searchCasesJson([{ project: '14', rql: 'id > 0' }])).rejects.toThrow(
+    await expect(listedIds(gw, [{ project: '1', rql: 'id > 0' }])).rejects.toThrow(
       'не выбрано рабочее дерево разделов',
     );
     expect(searched).toBe(0);
@@ -232,7 +214,7 @@ describe('список деревьев и хранилище', () => {
 
   it('--tree none: путь пуст, ни ошибки, ни предупреждения', async () => {
     const warnings: string[] = [];
-    const gw = new Gateway(cfg, clientWith([wide, behaviors], { calls: 0 }), undefined, null, false, (m) =>
+    const gw = new Gateway(cfg, clientWith([wide, behaviors], { calls: 0 }), undefined, null, (m) =>
       warnings.push(m),
     );
     gw.useTree('none', {}, true);
@@ -245,7 +227,7 @@ describe('список деревьев и хранилище', () => {
 
   it('команде без пути дерево не нужно: ни ошибки, ни предупреждения', async () => {
     const warnings: string[] = [];
-    const gw = new Gateway(cfg, clientWith([wide, behaviors], { calls: 0 }), undefined, null, false, (m) =>
+    const gw = new Gateway(cfg, clientWith([wide, behaviors], { calls: 0 }), undefined, null, (m) =>
       warnings.push(m),
     );
     gw.useTree(null, {}, false);
@@ -297,7 +279,6 @@ describe('дерево выбирается по названию', () => {
       clientWith([wide, behaviors], { calls: 0 }),
       undefined,
       null,
-      false,
       () => {},
     );
     gw.useTree(null, {}, true);
@@ -315,7 +296,6 @@ describe('сообщение об остановке самодостаточн�
       clientWith([wide, behaviors], { calls: 0 }),
       undefined,
       null,
-      false,
       () => {},
     );
     gw.useTree(null, {}, true);

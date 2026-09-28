@@ -1,34 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolveSettings } from './config.js';
-import { ConfigError, CacheError } from './errors.js';
+import { resolveSettings, setNested } from './config.js';
+import { ConfigError, StorageError, errorText } from './errors.js';
 import {
   commonConfigFile,
   filesForProfile,
   profileDirFor,
+  readCommonConfig,
   resolveProfile,
   stateDir,
   type ProfileFlags,
 } from './settingsPaths.js';
 import { SETTINGS_FIELDS } from './settingsSchema.js';
 import { withLock, writeAtomic } from './stateLock.js';
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function setNested(target: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split('.');
-  let node = target;
-  parts.forEach((part, i) => {
-    if (i === parts.length - 1) {
-      node[part] = value;
-      return;
-    }
-    node[part] = node[part] && typeof node[part] === 'object' ? node[part] : {};
-    node = node[part] as Record<string, unknown>;
-  });
-}
 
 function defaultProfileJson(): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
@@ -41,17 +25,17 @@ function defaultProfileJson(): Record<string, unknown> {
 
 function createExclusive(path: string, content: string, mode?: number): boolean {
   try {
-    writeFileSync(path, content, mode === undefined ? { flag: 'wx' } : { flag: 'wx', mode });
+    writeFileSync(path, content, { flag: 'wx', mode });
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw new CacheError(`Не удалось создать файл настроек: ${errorText(error)}: ${path}`);
+    throw new StorageError(`Не удалось создать файл настроек: ${errorText(error)}: ${path}`);
   }
 }
 
 export async function configInit(
-  profileName = 'default',
-  env: NodeJS.ProcessEnv = process.env,
+  profileName: string,
+  env: NodeJS.ProcessEnv,
 ): Promise<{ created: string[] }> {
   return withLock(stateDir(env), () => {
     const created: string[] = [];
@@ -65,8 +49,8 @@ export async function configInit(
     if (createExclusive(profileFile, `${JSON.stringify(defaultProfileJson(), null, 2)}\n`)) {
       created.push(profileFile);
     }
-    const mode = process.platform === 'win32' ? undefined : 0o600;
-    if (createExclusive(credentialsFile, `${JSON.stringify({}, null, 2)}\n`, mode)) {
+    const secretMode = process.platform === 'win32' ? undefined : 0o600;
+    if (createExclusive(credentialsFile, `${JSON.stringify({}, null, 2)}\n`, secretMode)) {
       created.push(credentialsFile);
     }
     return { created };
@@ -82,15 +66,7 @@ export async function configUse(
     throw new ConfigError(`Профиль «${profileName}» не найден: ${profileDir}`);
   }
   await withLock(stateDir(env), () => {
-    const common = commonConfigFile(env);
-    let data: Record<string, unknown> = {};
-    if (existsSync(common)) {
-      try {
-        data = JSON.parse(readFileSync(common, 'utf8'));
-      } catch {
-        data = {};
-      }
-    }
+    const data = readCommonConfig(env) ?? {};
     data.profile = profileName;
     writeAtomic(stateDir(env), 'config.json', `${JSON.stringify(data, null, 2)}\n`);
   });

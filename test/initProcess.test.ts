@@ -74,6 +74,15 @@ describe('установка скилла через команду init', () =>
     expect(registry['@rizias/tt-testops'].skills['tt-testops'][0].path).toContain(
       '.claude/skills/tt-testops',
     );
+    const references = ['aql.md', 'commands.md', 'format.md', 'settings.md'];
+    for (const file of references) {
+      expect(hashFile(join(project, '.claude/skills/tt-testops/references', file))).toBe(
+        hashFile(join(process.cwd(), 'skills/tt-testops/references', file)),
+      );
+    }
+    expect(registry['@rizias/tt-testops'].skills['tt-testops'][0].files).toEqual(
+      expect.arrayContaining(['SKILL.md', ...references.map((file) => `references/${file}`)]),
+    );
   });
 
   it('без флага и терминала не меняет существующую копию', () => {

@@ -12,13 +12,7 @@ export interface AppConfig {
   projects: Record<string, string>;
   people: Record<string, string>;
   trees: Record<string, number | string>;
-  timeoutMs: number;
-  maxCases: number;
-  concurrency: number;
-  retries: number;
-  pageSize: number;
-  sort: string;
-  cacheDir: string;
+  profileDir: string;
   profileFile?: string;
   formatFile?: string;
 }
@@ -50,20 +44,22 @@ function readJson(path: string, describe: string): Record<string, unknown> | nul
   return data as Record<string, unknown>;
 }
 
+export function setNested(target: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let node = target;
+  parts.forEach((part, i) => {
+    if (i === parts.length - 1) {
+      node[part] = value;
+      return;
+    }
+    node[part] = node[part] && typeof node[part] === 'object' ? node[part] : {};
+    node = node[part] as Record<string, unknown>;
+  });
+}
+
 function allowedTree(paths: string[]): Record<string, unknown> {
   const root: Record<string, unknown> = {};
-  for (const path of paths) {
-    let node = root;
-    const parts = path.split('.');
-    parts.forEach((part, i) => {
-      if (i === parts.length - 1) {
-        node[part] = true;
-        return;
-      }
-      node[part] = node[part] && typeof node[part] === 'object' ? node[part] : {};
-      node = node[part] as Record<string, unknown>;
-    });
-  }
+  for (const path of paths) setNested(root, path, true);
   return root;
 }
 
@@ -76,7 +72,10 @@ function checkUnknownKeys(
   for (const key of Object.keys(data)) {
     const node = allowed[key];
     const full = prefix ? `${prefix}.${key}` : key;
-    if (node === undefined) throw new ConfigError(`Неизвестное поле ${full} в ${filePath}.`);
+    if (node === undefined) {
+      process.stderr.write(`Предупреждение: неизвестное поле ${full} в ${filePath}\n`);
+      continue;
+    }
     const value = data[key];
     if (node !== true && typeof value === 'object' && value !== null && !Array.isArray(value)) {
       checkUnknownKeys(value as Record<string, unknown>, node as Record<string, unknown>, filePath, full);
@@ -84,9 +83,7 @@ function checkUnknownKeys(
   }
 }
 
-const PROFILE_PATHS = [
-  ...SETTINGS_FIELDS.filter((f) => f.key !== 'token').map((f) => f.path),
-];
+const PROFILE_PATHS = SETTINGS_FIELDS.filter((f) => f.key !== 'token').map((f) => f.path);
 const CREDENTIALS_PATHS = [fieldByKey('token').path];
 
 function resolvePathValue(value: string, fileDir: string): string {
@@ -98,11 +95,7 @@ function numberFromEnv(field: SettingsField, raw: string): number {
   if (!/^-?\d+$/.test(raw)) {
     throw new ConfigError(`${field.envVar} должен быть целым числом, получено: ${raw}`);
   }
-  const n = Number(raw);
-  if (field.min !== undefined && n < field.min) {
-    throw new ConfigError(`${field.envVar} не должен быть меньше ${field.min}, получено: ${raw}`);
-  }
-  return n;
+  return Number(raw);
 }
 
 function validateFileValue(field: SettingsField, value: unknown, filePath: string): void {
@@ -110,18 +103,8 @@ function validateFileValue(field: SettingsField, value: unknown, filePath: strin
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw new ConfigError(`Поле ${field.path} должно быть числом: ${filePath}`);
     }
-    if (field.min !== undefined && value < field.min) {
-      throw new ConfigError(`Поле ${field.path} не должно быть меньше ${field.min}: ${filePath}`);
-    }
-  } else if (field.type === 'string') {
-    if (typeof value !== 'string') {
-      throw new ConfigError(`Поле ${field.path} должно быть строкой: ${filePath}`);
-    }
-    if (field.enumValues && !field.enumValues.includes(value)) {
-      throw new ConfigError(
-        `Поле ${field.path} должно быть одним из: ${field.enumValues.join(', ')}: ${filePath}`,
-      );
-    }
+  } else if (field.type === 'string' && typeof value !== 'string') {
+    throw new ConfigError(`Поле ${field.path} должно быть строкой: ${filePath}`);
   }
 }
 
@@ -154,11 +137,6 @@ export function resolveField(
   if (field.envVar !== undefined && env[field.envVar] !== undefined) {
     const raw = env[field.envVar] as string;
     const value = field.type === 'number' ? numberFromEnv(field, raw) : raw;
-    if (field.type === 'string' && field.enumValues && !field.enumValues.includes(raw)) {
-      throw new ConfigError(
-        `${field.envVar} должен быть одним из: ${field.enumValues.join(', ')}, получено: ${raw}`,
-      );
-    }
     return { field, value, source: 'env', filePath };
   }
   const fromFile = fileData ? getByPath(fileData, field.path) : undefined;
@@ -188,10 +166,7 @@ export interface ResolvedSettings {
   resolutions: FieldResolution[];
 }
 
-export function resolveSettings(
-  flags: ProfileFlags = {},
-  env: NodeJS.ProcessEnv = process.env,
-): ResolvedSettings {
+export function resolveSettings(flags: ProfileFlags, env: NodeJS.ProcessEnv): ResolvedSettings {
   const selection = resolveProfile(flags, env);
   const profileData = readJson(selection.profileFile, 'Файл profile.json');
   const credentialsData = readJson(selection.credentialsFile, 'Файл credentials.json');
@@ -228,43 +203,33 @@ export function loadConfig(
     projects: asStringMap(get('projects').value),
     people: asStringMap(get('people').value),
     trees: asTreeMap(get('trees').value, selection.profileFile),
-    timeoutMs: Math.round((get('timeoutSec').value as number) * 1000),
-    maxCases: get('maxCases').value as number,
-    concurrency: get('concurrency').value as number,
-    retries: get('retries').value as number,
-    pageSize: 20,
-    sort: 'id,DESC',
-    cacheDir: join(selection.profileDir, 'cache'),
+    profileDir: selection.profileDir,
     profileFile: selection.profileFile,
     formatFile: get('formatFile').value as string | undefined,
   };
 }
 
-export class ProjectResolver {
-  constructor(private readonly cfg: AppConfig) {}
-
-  resolve(override?: number | string | null): number {
-    if (override === undefined || override === null || override === '') {
-      if (this.cfg.defaultProjectId === undefined) {
-        throw new ConfigError(
-          'Проект не задан. Передай его флагом --project или задай TT_TESTOPS_DEFAULT_PROJECT ' +
-            '(поле defaultProject в profile.json).',
-        );
-      }
-      return this.cfg.defaultProjectId;
+export function resolveProject(cfg: AppConfig, override?: number | string | null): number {
+  if (override === undefined || override === null || override === '') {
+    if (cfg.defaultProjectId === undefined) {
+      throw new ConfigError(
+        'Проект не задан. Передай его флагом --project или задай TT_TESTOPS_DEFAULT_PROJECT ' +
+          '(поле defaultProject в profile.json).',
+      );
     }
-    if (typeof override === 'number') return override;
-    if (/^\d+$/.test(override)) return Number(override);
-    for (const [id, name] of Object.entries(this.cfg.projects)) {
-      if (name === override) return Number(id);
-    }
-    const known = Object.entries(this.cfg.projects)
-      .map(([id, name]) => `${name} (${id})`)
-      .join(', ');
-    throw new ConfigError(
-      `Проекта «${override}» нет в конфигурации. ${
-        known ? `Известные: ${known}.` : 'Словарь projects пуст.'
-      } Номер проекта тоже подходит: --project <номер>.`,
-    );
+    return cfg.defaultProjectId;
   }
+  if (typeof override === 'number') return override;
+  if (/^\d+$/.test(override)) return Number(override);
+  for (const [id, name] of Object.entries(cfg.projects)) {
+    if (name === override) return Number(id);
+  }
+  const known = Object.entries(cfg.projects)
+    .map(([id, name]) => `${name} (${id})`)
+    .join(', ');
+  throw new ConfigError(
+    `Проекта «${override}» нет в конфигурации. ${
+      known ? `Известные: ${known}.` : 'Словарь projects пуст.'
+    } Номер проекта тоже подходит: --project <номер>.`,
+  );
 }

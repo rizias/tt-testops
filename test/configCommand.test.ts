@@ -48,21 +48,14 @@ describe('config — текстовый вид', () => {
   });
 });
 
-describe('config --json', () => {
-  it('печатает валидный JSON с источником env у поля, заданного переменной', () => {
+describe('config: источник и секрет', () => {
+  it('у поля, заданного переменной, источник env, а секрет назван заданным без значения', () => {
     const h = newHome();
     withProfile(h);
-    const r = run(['config', '--json'], envFor(h, { TT_TESTOPS_MAX_CASES: '55' }));
+    const r = run(['config'], envFor(h, { TT_TESTOPS_DEFAULT_PROJECT: '55' }));
     expect(r.code).toBe(0);
-    const parsed = JSON.parse(r.stdout) as {
-      fields: Array<{ key: string; source: string; value?: unknown; secretSet?: boolean }>;
-    };
-    const maxCases = parsed.fields.find((f) => f.key === 'maxCases');
-    expect(maxCases?.source).toBe('env');
-    expect(maxCases?.value).toBe(55);
-    const token = parsed.fields.find((f) => f.key === 'token');
-    expect(token?.secretSet).toBe(true);
-    expect(token?.value).toBeUndefined();
+    expect(r.stdout).toContain('defaultProject: 55 (env)');
+    expect(r.stdout).toMatch(/^testops\.token: задан \(/m);
   });
 
   it('секрет без значения отмечен как не задан', () => {
@@ -75,9 +68,8 @@ describe('config --json', () => {
       'utf8',
     );
     writeFileSync(join(dir, 'credentials.json'), '{}', 'utf8');
-    const r = run(['config', '--json'], envFor(h));
-    const parsed = JSON.parse(r.stdout) as { fields: Array<{ key: string; secretSet?: boolean }> };
-    expect(parsed.fields.find((f) => f.key === 'token')?.secretSet).toBe(false);
+    const r = run(['config'], envFor(h));
+    expect(r.stdout).toMatch(/^testops\.token: не задан \(/m);
   });
 });
 
@@ -87,10 +79,9 @@ describe('секрет не встречается в выводе', () => {
     withProfile(h);
     const attempts: Array<[string[], NodeJS.ProcessEnv]> = [
       [['config'], envFor(h)],
-      [['config', '--json'], envFor(h)],
-      [['cache'], envFor(h)],
+      [['attachments'], envFor(h)],
       [['config', 'use', 'нет-такого'], envFor(h)],
-      [['case', '1'], envFor(h, { TT_TESTOPS_RETRIES: '0' })],
+      [['case', '1'], envFor(h)],
     ];
     for (const [args, env] of attempts) {
       const r = run(args, env);
@@ -137,6 +128,7 @@ describe('config init', () => {
     expect(existsSync(join(h, '.tt-testops', 'profiles', 'stage', 'credentials.json'))).toBe(true);
   });
 
+
   it('права credentials.json равны 0600 на POSIX', () => {
     const h = newHome();
     run(['config', 'init'], envFor(h));
@@ -163,6 +155,18 @@ describe('config use', () => {
     expect(common.profile).toBe('ci');
   });
 
+  it('повреждённый config.json — ошибка с путём, файл не перезаписан', () => {
+    const h = newHome();
+    withProfile(h);
+    withProfile(h, 'ci');
+    const common = join(h, '.tt-testops', 'config.json');
+    writeFileSync(common, '{ не json', 'utf8');
+    const r = run(['config', 'use', 'ci'], envFor(h));
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain(common);
+    expect(readFileSync(common, 'utf8')).toBe('{ не json');
+  });
+
   it('на несуществующий профиль завершается не нулём и называет путь', () => {
     const h = newHome();
     withProfile(h);
@@ -187,11 +191,13 @@ describe('config profiles', () => {
       'utf8',
     );
     writeFileSync(join(dir, 'credentials.json'), JSON.stringify({ testops: { token: TOKEN } }), 'utf8');
+    mkdirSync(join(h, '.tt-testops', 'profiles', 'default', 'attachments.lock'), { recursive: true });
     const r = run(['config', 'profiles'], envFor(h));
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('ci');
     expect(r.stdout).toContain('контур CI');
     expect(r.stdout).toMatch(/\*\s+default/);
+    expect(r.stdout).not.toContain('.lock');
   });
 });
 

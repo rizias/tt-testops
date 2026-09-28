@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { type EmbeddedAssets, type HtmlCase, renderBatchHtml } from '../src/html.js';
 import type { TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const assets: EmbeddedAssets = new Map();
 
@@ -9,24 +10,24 @@ const caseOf = (id: string, automated: boolean, path: string[]): HtmlCase => ({
   tc: {
     id,
     name: `Кейс ${id}`,
-    projectId: 14,
+    projectId: 1,
     path,
     status: 'Active',
     automated,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
     relatedCases: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: 'Описание',
     precondition: '',
     expectedResult: '',
     scenarioSource: 'newSteps',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
     comments: [],
   } as TestCase,
@@ -35,14 +36,14 @@ const caseOf = (id: string, automated: boolean, path: string[]): HtmlCase => ({
 
 const page = renderBatchHtml(
   [
-    caseOf('1', true, ['Клиенты', 'Сделки']),
-    caseOf('2', false, ['Клиенты', 'Фиксации']),
-    caseOf('3', false, ['Ипотека']),
+    caseOf('1', true, ['Раздел А', 'Раздел Б']),
+    caseOf('2', false, ['Раздел А', 'Раздел В']),
+    caseOf('3', false, ['Раздел Г']),
   ],
   defaultProfile,
   assets,
   'https://testops.test',
-  { 14: 'Демопроект' },
+  { 1: 'Демопроект' },
 );
 
 describe('слева дерево кейсов, справа выбранный кейс', () => {
@@ -95,16 +96,16 @@ describe('нулевое состояние правой колонки', () => 
   it('несколько проектов названы во множественном числе', () => {
     const two = renderBatchHtml(
       [
-        caseOf('1', true, ['Клиенты']),
+        caseOf('1', true, ['Раздел А']),
         {
-          ...caseOf('2', false, ['Ипотека']),
-          tc: { ...caseOf('2', false, ['Ипотека']).tc, projectId: 120 },
+          ...caseOf('2', false, ['Раздел Г']),
+          tc: { ...caseOf('2', false, ['Раздел Г']).tc, projectId: 4 },
         },
       ],
       defaultProfile,
       assets,
       '',
-      { 14: 'Первый', 120: 'Второй' },
+      { 1: 'Первый', 4: 'Второй' },
     );
     expect(two).toContain('<dt>Проекты</dt><dd>Первый, Второй</dd>');
   });

@@ -73,13 +73,13 @@ export function pickTree(
 
 export function treePath(fields: RawCustomField[], tree: ProjectTree | null): string[] {
   if (!tree) return [];
-  const value = new Map<number, string>();
+  const value = new Map<number, string[]>();
   for (const c of fields) {
     const id = c.customField?.id;
     const name = c.name ?? '';
-    if (typeof id === 'number' && name && !value.has(id)) value.set(id, name);
+    if (typeof id === 'number' && name) value.set(id, [...(value.get(id) ?? []), name]);
   }
-  return tree.fields.map((f) => value.get(f.id) ?? '').filter((v) => v !== '');
+  return tree.fields.map((f) => (value.get(f.id) ?? []).join(', ')).filter((v) => v !== '');
 }
 
 export interface TreeAdviceInput {

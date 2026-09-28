@@ -5,6 +5,11 @@ import { normalizeComments } from '../src/normalize.js';
 import { TestOpsClient } from '../src/testops/client.js';
 import type { PortResponse, TestOpsPort } from '../src/testops/port.js';
 
+async function caseDetails(client: TestOpsClient, id: string) {
+  const overview = await client.fetchOverview(id);
+  return overview ? client.fetchCaseFromOverview(overview) : null;
+}
+
 const jwtWithExp = (secondsFromNow: number): string =>
   `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + secondsFromNow })).toString('base64url')}.s`;
 
@@ -18,14 +23,10 @@ const resp = (status: number, body: unknown): PortResponse => ({
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'секрет',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 class RecordingPort implements TestOpsPort {
@@ -59,13 +60,14 @@ describe('комментарии кейса', () => {
   it('ошибка сервера оставляет кейс без комментариев и говорит об этом', async () => {
     const port = new RecordingPort((url) => {
       if (url.includes('/comment')) return resp(500, {});
-      if (url.includes('/overview')) return resp(200, { id: 1, projectId: 14 });
+      if (url.includes('/overview')) return resp(200, { id: 1, projectId: 1 });
       return resp(200, { content: [] });
     });
     const warnings: string[] = [];
-    const raw = await new TestOpsClient({ ...cfg, retries: 0 }, port, undefined, (m) =>
-      warnings.push(m),
-    ).fetchCaseDetails('1');
+    const raw = await caseDetails(
+      new TestOpsClient(cfg, port, (m) => warnings.push(m)),
+      '1',
+    );
     expect(raw?.comments).toBeNull();
     expect(warnings.join(' ')).toContain('комментарии');
   });
@@ -73,10 +75,10 @@ describe('комментарии кейса', () => {
   it('404 означает, что комментариев нет', async () => {
     const port = new RecordingPort((url) => {
       if (url.includes('/comment')) return resp(404, {});
-      if (url.includes('/overview')) return resp(200, { id: 1, projectId: 14 });
+      if (url.includes('/overview')) return resp(200, { id: 1, projectId: 1 });
       return resp(200, { content: [] });
     });
-    const raw = await new TestOpsClient(cfg, port).fetchCaseDetails('1');
+    const raw = await caseDetails(new TestOpsClient(cfg, port), '1');
     expect(raw?.comments).toBeNull();
   });
 });

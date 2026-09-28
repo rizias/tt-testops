@@ -2,22 +2,31 @@ import { existsSync, readFileSync } from 'node:fs';
 import { ConfigError } from './errors.js';
 import { checkProfile } from './profileCheck.js';
 
-export const SECTION_ORDER = ['description', 'precondition', 'scenario', 'expectedResult'] as const;
+export const SECTION_ORDER = [
+  'description',
+  'precondition',
+  'scenario',
+  'expectedResult',
+  'comments',
+] as const;
 
 export type SectionKey = (typeof SECTION_ORDER)[number];
 
 export interface FormatProfile {
-  contractVersion: string;
-  id: string;
   meta: {
+    addressLabel: string;
+    projectLabel: string;
     statusLabel: string;
     typeLabel: string;
     layerLabel: string;
     tagsLabel: string;
     linksLabel: string;
+    ownerLabel: string;
+    participantsLabel: string;
+    issuesLabel: string;
+    relatedCasesLabel: string;
     automatedValue: string;
     manualValue: string;
-    layerDefault: string;
     pathLabel: string;
     pathDisplaySep: string;
 
@@ -28,12 +37,14 @@ export interface FormatProfile {
     precondition: string;
     scenario: string;
     expectedResult: string;
+    comments: string;
   };
 
   sectionOrder: SectionKey[];
   warnings: {
     emptyScenario: string;
     stepsFetchError: string;
+    autotestScenario: string;
   };
   steps: {
     indent: string;
@@ -53,48 +64,49 @@ export interface FormatProfile {
 
   legacyBanner: string;
 
-  inconsistentBanner: string;
-
   customFields: {
     hide: string[];
     rename: Record<string, string>;
     order: string[];
   };
 
-  removeLinks: boolean;
-
   showMarks: boolean;
 }
 
 export const defaultProfile: FormatProfile = {
-  contractVersion: '1.0',
-  id: 'testops-markdown',
   meta: {
+    addressLabel: 'Адрес в TestOps',
+    projectLabel: 'Проект',
     statusLabel: 'Статус',
     typeLabel: 'Тип',
-    layerLabel: 'Layer',
+    layerLabel: 'Слой',
     tagsLabel: 'Теги',
     linksLabel: 'Ссылки',
+    ownerLabel: 'Владелец',
+    participantsLabel: 'Участники',
+    issuesLabel: 'Задачи',
+    relatedCasesLabel: 'Связанные кейсы',
     automatedValue: 'Автоматизированный',
     manualValue: 'Ручной',
-    layerDefault: 'Не указан',
     pathLabel: 'Путь',
     pathDisplaySep: ' → ',
-    attributeLine: '- **{name}:** `{value}`',
+    attributeLine: '- **{name}:** {value}',
   },
   sections: {
     description: '### Описание',
     precondition: '### Предварительное условие',
     scenario: '### Сценарий',
     expectedResult: '### Ожидаемый результат',
+    comments: '### Комментарии',
   },
   sectionOrder: [...SECTION_ORDER],
   warnings: {
     emptyScenario: '> ⚠️ **Нет шагов** (Сценарий пуст)',
     stepsFetchError: '_Ошибка получения шагов или пустой ответ API_',
+    autotestScenario: '> ⚠️ **Нет шагов** (сценарий взят из автотеста)',
   },
   steps: {
-    indent: '  ',
+    indent: '    ',
     numbered: true,
     expandAttachments: true,
 
@@ -109,10 +121,7 @@ export const defaultProfile: FormatProfile = {
   },
   legacyBanner:
     '> ⚠️ **Старый формат** — кейс рекомендуется обновить (шаги ниже актуальны на момент выгрузки).',
-  inconsistentBanner:
-    '> ⚠️ **Несогласованный формат** — кейс объявлен ручным, а сценарий лежит сырым Markdown (шаги ниже актуальны на момент выгрузки).',
   customFields: { hide: [], rename: {}, order: [] },
-  removeLinks: false,
   showMarks: true,
 };
 

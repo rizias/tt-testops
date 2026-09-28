@@ -115,7 +115,7 @@ document.addEventListener('click', function (e) {
   }
 
   var b = e.target.closest && e.target.closest('.ctl, .toTop');
-  if (!b) return;
+  if (!b || b.hasAttribute('href')) return;
   e.preventDefault();
   e.stopPropagation();
   var act = b.dataset.act;
@@ -213,7 +213,7 @@ function markHere(id) {
   if (panel && !panel.hidden && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
 }
 function updateHere() {
-  var toolbar = 44;
+  var toolbar = 80;
   var step = 30;
   var best = null;
   var bestDepth = -1;
@@ -229,7 +229,7 @@ function updateHere() {
   if (best) markHere(best.id);
 }
 if (heads.length && window.IntersectionObserver) {
-  var spy = new IntersectionObserver(updateHere, { rootMargin: '-56px 0px -92% 0px' });
+  var spy = new IntersectionObserver(updateHere, { rootMargin: '-92px 0px -92% 0px' });
   for (var h = 0; h < heads.length; h++) spy.observe(heads[h]);
   updateHere();
 }

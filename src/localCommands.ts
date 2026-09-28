@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import type { Flags } from './args.js';
-import { CaseCache, humanSize } from './cache.js';
+import { AttachmentStore, humanSize } from './attachmentStore.js';
 import {
   configInit,
   configProfiles,
@@ -16,7 +16,11 @@ import { resolveProfile } from './settingsPaths.js';
 import { setupAdvice } from './setup.js';
 import { runInit, runUpdate } from './skills/setup.js';
 
-export const LOCAL_COMMANDS = ['setup', 'cache', 'config', 'init', 'update'];
+export const LOCAL_COMMANDS = ['setup', 'config', 'init', 'update'];
+
+export function storeCommand(cmd: string, f: Flags): boolean {
+  return cmd === 'attachments' && (f._[0] === undefined || f._[0] === 'clear');
+}
 const INIT_TOOLS = ['claude', 'agents'] as const;
 type InitTool = (typeof INIT_TOOLS)[number];
 
@@ -25,42 +29,38 @@ interface LocalCommandResult {
   code: number;
 }
 
-async function cacheOutput(f: Flags, env: NodeJS.ProcessEnv): Promise<string> {
-  const settingsFlags = { profile: f.profile, config: f.config };
+async function storeOutput(f: Flags, env: NodeJS.ProcessEnv): Promise<string> {
+  const settingsFlags = { profile: f.profile };
   const selection = resolveProfile(settingsFlags, env);
-  const cache = new CaseCache(join(selection.profileDir, 'cache'));
+  const store = new AttachmentStore(selection.profileDir);
   if (f._[0] === 'clear') {
-    const before = cache.stats();
-    await cache.clear(() =>
+    const before = store.stats();
+    await store.clear(() =>
       process.stderr.write('Предупреждение: ожидание освобождения хранилища перед очисткой\n'),
     );
-    if (f.format === 'json') return JSON.stringify({ cleared: before }, null, 2);
-    return `Очищено: ${before.cases} кейсов, ${before.attachments} вложений, ${humanSize(before.bytes)}.`;
+    return `Очищено: файлов вложений ${before.files}, ${humanSize(before.bytes)}; сессии и списки деревьев удалены.`;
   }
-  const s = cache.stats();
+  const s = store.stats();
   const cfg = loadConfig(settingsFlags, env);
-  const saved = cache.getSession(cfg.baseUrl, cfg.token);
-  const session = saved ? { expiresAt: new Date(saved.expiresAt).toISOString() } : null;
-  if (f.format === 'json') return JSON.stringify({ ...s, session }, null, 2);
+  const saved = store.getSession(cfg.baseUrl, cfg.token);
   return [
     `Хранилище: ${s.dir}`,
-    `Кейсов: ${s.cases}`,
-    `Вложений: ${s.attachments}`,
+    `Файлов вложений: ${s.files}`,
     `Занимает: ${humanSize(s.bytes)}`,
-    session
-      ? `Сессия настроенной пары действует до: ${session.expiresAt}`
+    saved
+      ? saved.expiresAt === null
+        ? 'Сессия настроенной пары без срока: действует, пока сервер её не отверг.'
+        : `Сессия настроенной пары действует до: ${new Date(saved.expiresAt).toISOString()}`
       : 'Сессия для настроенной пары отсутствует.',
   ].join('\n');
 }
 
 async function configOutput(f: Flags, env: NodeJS.ProcessEnv): Promise<LocalCommandResult> {
-  const settingsFlags = { profile: f.profile, config: f.config };
-  const words = f._.filter((word) => word !== '--json');
-  const json = f.format === 'json' || words.length !== f._.length;
+  const settingsFlags = { profile: f.profile };
+  const words = f._;
   const sub = words[0];
   if (sub === 'init') {
     const { created } = await configInit(f.profile ?? 'default', env);
-    if (json) return { output: JSON.stringify({ created }, null, 2), code: 0 };
     return {
       output: created.length ? `Создано:\n${created.join('\n')}` : 'Уже создано, изменений нет.',
       code: 0,
@@ -75,13 +75,13 @@ async function configOutput(f: Flags, env: NodeJS.ProcessEnv): Promise<LocalComm
   if (sub === 'profiles') {
     const list = configProfiles(env);
     return {
-      output: json ? JSON.stringify(list, null, 2) : renderProfilesText(list),
+      output: renderProfilesText(list),
       code: 0,
     };
   }
   const view = configView(settingsFlags, env);
   return {
-    output: json ? JSON.stringify(view, null, 2) : renderConfigText(view),
+    output: renderConfigText(view),
     code: 0,
   };
 }
@@ -120,17 +120,17 @@ export async function localCommand(
   f: Flags,
   version: string,
   toolDir: string,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<LocalCommandResult> {
   if (cmd === 'setup') {
     const advice = setupAdvice(f._[0] ?? process.cwd(), toolDir, version);
-    return {
-      output: f.format === 'json' ? JSON.stringify(advice, null, 2) : advice.lines.join('\n'),
-      code: 0,
-    };
+    return { output: advice.lines.join('\n'), code: 0 };
   }
-  if (cmd === 'cache') return { output: await cacheOutput(f, env), code: 0 };
-  if (cmd === 'config') return configOutput(f, env);
-  if (cmd === 'update') return { output: '', code: runUpdate() };
+  if (cmd === 'attachments') return { output: await storeOutput(f, process.env), code: 0 };
+  if (cmd === 'config') return configOutput(f, process.env);
+  if (cmd === 'update') {
+    const code = runUpdate();
+    process.exitCode = code;
+    return { output: '', code };
+  }
   return initOutput(f);
 }

@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentKind, Templates } from './updaterState.js';
-import { isSafeRelative, kindOfBase, pathKey, samePath, toSlash } from './updaterState.js';
+import { isSafeRelative, pathKey, samePath, toSlash } from './updaterState.js';
 
 const FRONTMATTER = /^---\n([\s\S]*?)\n---(?=\n|$)/;
 
@@ -69,49 +68,25 @@ export const collisions = (
   );
 };
 
-const templateRoots = (templates: Templates): string[] => {
-  if (typeof templates === 'string') return [templates];
-  return [templates.common, templates.claude, templates.codex, templates.agents].filter(
-    (root): root is string => root !== undefined,
-  );
-};
-
 const hasSkillDoc = (dir: string): boolean =>
   fs.statSync(path.join(dir, 'SKILL.md'), { throwIfNoEntry: false })?.isFile() === true;
 
-export const resolveTemplate = (
-  templates: Templates,
-  kind: AgentKind,
-  skill: string,
-): string | undefined => {
-  if (typeof templates === 'string') {
-    const dir = path.join(templates, skill);
-    return hasSkillDoc(dir) ? dir : undefined;
-  }
-  const roots = [templates[kind], templates.common].filter(
-    (root): root is string => root !== undefined,
-  );
-  for (const root of roots) {
-    const dir = path.join(root, skill);
-    if (hasSkillDoc(dir)) return dir;
-  }
-  return undefined;
+export const resolveTemplate = (templates: string, skill: string): string | undefined => {
+  const dir = path.join(templates, skill);
+  return hasSkillDoc(dir) ? dir : undefined;
 };
 
-export const scanSkills = (templates: Templates): string[] => {
-  const names = new Set<string>();
-  for (const root of templateRoots(templates)) {
-    let entries: fs.Dirent[] = [];
-    try {
-      entries = fs.readdirSync(root, { withFileTypes: true });
-    } catch {
-      entries = [];
-    }
-    for (const entry of entries) {
-      if (entry.isDirectory() && hasSkillDoc(path.join(root, entry.name))) names.add(entry.name);
-    }
+export const scanSkills = (templates: string): string[] => {
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(templates, { withFileTypes: true });
+  } catch {
+    entries = [];
   }
-  return [...names].sort();
+  const names = entries
+    .filter((entry) => entry.isDirectory() && hasSkillDoc(path.join(templates, entry.name)))
+    .map((entry) => entry.name);
+  return names.sort();
 };
 
 export const stampOf = (dir: string, skill: string): string | undefined => {
@@ -153,11 +128,10 @@ export const placeSkill = (template: string, dest: string, recorded: readonly st
 export interface Job {
   skill: string;
   dest: string;
-  kind: AgentKind;
 }
 
 export const planJobs = (
-  templates: Templates,
+  templates: string,
   bases: string[],
   skills: string[],
 ): { jobs: Job[]; duplicates: Job[] } => {
@@ -165,10 +139,9 @@ export const planJobs = (
   const duplicates: Job[] = [];
   for (const base of bases) {
     for (const skill of skills) {
-      const kind = kindOfBase(base);
-      if (resolveTemplate(templates, kind, skill) === undefined) continue;
+      if (resolveTemplate(templates, skill) === undefined) continue;
       const dest = toSlash(path.join(base, skill));
-      const job = { skill, dest, kind };
+      const job = { skill, dest };
       const taken = jobs.find((other) => samePath(other.dest, dest));
       if (taken === undefined) jobs.push(job);
       else if (taken.skill !== skill) duplicates.push(job);

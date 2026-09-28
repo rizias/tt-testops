@@ -8,6 +8,8 @@ import {
 } from '../src/html.js';
 import type { TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
+import { step, stepsOf } from './scenarioFixtures.js';
+import { scenarioHtml } from '../src/htmlRichSteps.js';
 
 const ATT = 'https://x.test/api/testcase/attachment/20001/content';
 const assets: EmbeddedAssets = new Map([[20001, 'data:image/png;base64,AAAA']]);
@@ -16,24 +18,24 @@ const testCase = (over: Partial<TestCase> = {}): TestCase =>
   ({
     id: '10002',
     name: 'Проверка входа',
-    projectId: 14,
+    projectId: 1,
     path: ['Раздел', 'Подраздел'],
     status: 'Active',
     automated: false,
     layer: 'Web',
     tags: ['Smoke'],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
     relatedCases: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: 'Описание',
     precondition: '',
     expectedResult: 'Готово',
     scenarioSource: 'newSteps',
+    scenario: stepsOf('Шаг один', 'Шаг два'),
     scenarioLines: ['1. Шаг один', '2. Шаг два'],
     comments: [],
     ...over,
@@ -60,27 +62,6 @@ describe('renderMarkdown', () => {
     const html = renderMarkdown('| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\nx=1\n```', assets);
     expect(html).toContain('<table>');
     expect(html).toContain('<code');
-  });
-
-  it('removes a script tag coming from case text', () => {
-    const html = renderMarkdown('нажми <script>alert(1)</script>', assets);
-    expect(html).not.toContain('<script');
-    expect(html).not.toContain('alert(1)');
-    expect(html).toContain('нажми');
-  });
-
-  it('removes inline event handlers', () => {
-    expect(renderMarkdown('<img src="x.png" onerror="alert(1)">', assets)).not.toContain('onerror');
-  });
-
-  it('defuses a javascript: link', () => {
-    expect(renderMarkdown('<a href="javascript:alert(1)">клик</a>', assets)).not.toContain(
-      'javascript:',
-    );
-  });
-
-  it('keeps harmless inline html', () => {
-    expect(renderMarkdown('текст <b>жирный</b>', assets)).toContain('<b>жирный</b>');
   });
 
   it('leaves non-attachment links alone', () => {
@@ -142,7 +123,7 @@ describe('batch page', () => {
 
   it('links each case back to TestOps without toggling the block', () => {
     const linked = renderBatchHtml(cases, defaultProfile, assets, 'https://testops.test');
-    expect(linked).toContain('href="https://testops.test/project/14/test-cases/1"');
+    expect(linked).toContain('href="https://testops.test/project/1/test-cases/1"');
     expect(linked).toContain('target="_blank"');
   });
 
@@ -190,5 +171,44 @@ describe('comments', () => {
   it('у кейса без комментариев метки о комментариях нет', () => {
     const batch = renderBatchHtml([one({ id: '2' }), one({ id: '3' })], defaultProfile, assets);
     expect(batch).not.toContain('комментариев:');
+  });
+});
+
+describe('раскладка страницы', () => {
+  it('вид документом не шире 1200 пикселей и сужается вместе с окном', () => {
+    const html = renderCaseHtml(one(), defaultProfile, assets);
+    expect(html).toContain('margin:0 auto; padding:32px 24px 64px; max-width:1200px;');
+  });
+
+  it('номер шага стоит в строке с текстом, а не приколот сверху', () => {
+    const html = renderCaseHtml(one(), defaultProfile, assets);
+    expect(html).toContain(
+      'content:attr(data-n); float:left; width:26px; margin:0 8px 0 -34px; text-align:right;',
+    );
+    expect(html).toContain('font:500 13px/21.6px var(--mono)');
+    expect(html).toContain('.steps>li>:first-child,.expList>li>:first-child{margin-top:0}');
+  });
+});
+
+describe('поле отбора и списки внутри шагов', () => {
+  it('поле отбора прилипает под панелью, а в двух колонках — к верху дерева', () => {
+    const html = renderCaseHtml(one(), defaultProfile, assets);
+    expect(html).toContain('.treeFilter{\n  position:sticky; top:var(--toolbar-h); z-index:80;');
+    expect(html).toContain('body.split .treeFilter{top:0}');
+  });
+
+  it('номера получают только пункты сценария и ожидаемого результата', () => {
+    const html = renderCaseHtml(one(), defaultProfile, assets);
+    expect(html).toContain('.steps>li,.expList>li{padding:3px 0 3px 34px;');
+    expect(html).toContain('content:attr(data-n)');
+    expect(html).not.toContain('.block.scenario li{');
+  });
+
+  it('маркированный список в ожидаемом результате не сбивает номера шагов', () => {
+    const expected = { kind: 'text' as const, text: '* первое\n* второе', rich: null };
+    const html = scenarioHtml(stepsOf(step('Открыть', { expected }), 'Закрыть'), defaultProfile, assets);
+    expect((html.match(/<ol class="steps">/g) ?? []).length).toBe(1);
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li data-n="2.">Закрыть');
   });
 });

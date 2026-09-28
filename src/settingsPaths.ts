@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { ConfigError } from './errors.js';
 
 export type ProfileSource = 'flag' | 'env' | 'config' | 'default';
@@ -16,7 +16,6 @@ export interface ProfileSelection {
 }
 
 export interface ProfileFlags {
-  config?: string;
   profile?: string;
 }
 
@@ -44,7 +43,7 @@ export function filesForProfile(profileDir: string): { profileFile: string; cred
   };
 }
 
-function readCommonProfileName(env: NodeJS.ProcessEnv): string | null {
+export function readCommonConfig(env: NodeJS.ProcessEnv): Record<string, unknown> | null {
   const path = commonConfigFile(env);
   if (!existsSync(path)) return null;
   let data: unknown;
@@ -53,7 +52,14 @@ function readCommonProfileName(env: NodeJS.ProcessEnv): string | null {
   } catch {
     throw new ConfigError(`Общий файл настроек повреждён (не JSON): ${path}`);
   }
-  const profile = (data as { profile?: unknown } | null)?.profile;
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new ConfigError(`Общий файл настроек должен быть объектом JSON: ${path}`);
+  }
+  return data as Record<string, unknown>;
+}
+
+function readCommonProfileName(env: NodeJS.ProcessEnv): string | null {
+  const profile = readCommonConfig(env)?.profile;
   return typeof profile === 'string' && profile !== '' ? profile : null;
 }
 
@@ -68,21 +74,6 @@ function namedProfileDir(name: string, selectedBy: string, env: NodeJS.ProcessEn
 export function resolveProfile(flags: ProfileFlags, env: NodeJS.ProcessEnv): ProfileSelection {
   const common = commonConfigFile(env);
   const shared = { stateDir: stateDir(env), commonConfigFile: common };
-
-  if (flags.config) {
-    if (!existsSync(flags.config)) {
-      throw new ConfigError(`Файл настроек --config не найден: ${flags.config}`);
-    }
-    const profileDir = dirname(flags.config);
-    return {
-      ...shared,
-      profileName: null,
-      profileDir,
-      profileFile: flags.config,
-      credentialsFile: join(profileDir, 'credentials.json'),
-      source: 'flag',
-    };
-  }
 
   if (flags.profile) {
     const profileDir = profileDirFor(flags.profile, env);

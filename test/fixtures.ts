@@ -12,7 +12,7 @@ export const currentFormat: RawCase = {
     description: 'Проверяем вход',
     hasManualScenario: true,
     customFields: [
-      { name: 'Раздел', customField: { name: 'Section1', singleSelect: false } },
+      { name: 'Раздел', customField: { name: 'Поле1', singleSelect: false } },
       { name: 'Да', customField: { name: 'Smoke', singleSelect: true } },
     ],
   },
@@ -41,19 +41,6 @@ export const oldRawMarkdown: RawCase = {
     ],
 
     scenario: { steps: [{ attachments: [ATTACHMENT(9001, 'customSteps.md', 'text/markdown')] }] },
-  },
-  steps: null,
-  comments: [],
-};
-
-export const oldAttachmentOnScenario: RawCase = {
-  overview: {
-    id: 1008,
-    projectId: 7,
-    name: 'Старый кейс, вложение на сценарии',
-    status: { name: 'Manual' },
-    hasManualScenario: false,
-    scenario: { attachments: [ATTACHMENT(9005, 'customSteps.md', 'text/markdown')] },
   },
   steps: null,
   comments: [],
@@ -143,21 +130,9 @@ export const withComments: RawCase = {
   ],
 };
 
-export const allSamples: RawCase[] = [
-  currentFormat,
-  oldAttachmentOnScenario,
-  oldRawMarkdown,
-  oldInlineSteps,
-  emptyScenario,
-  imageInText,
-  imageOnStep,
-  withComments,
-];
-
 export const attachmentBodies: Record<number, string> = {
   9001: '- Открыть страницу\n- Проверить заголовок\n',
   9002: '',
   9003: '',
   9004: '',
-  9005: '- Шаги из вложения на сценарии\n',
 };

@@ -32,20 +32,6 @@ function writeCommon(h: string, profile: string): void {
 }
 
 describe('выбор профиля — источники', () => {
-  it('--config указывает файл, каталогом профиля становится его каталог', () => {
-    const h = newHome();
-    const dir = join(h, 'моя-точка');
-    mkdirSync(dir, { recursive: true });
-    const profileFile = join(h, 'моя-точка', 'profile.json');
-    writeFileSync(profileFile, '{}', 'utf8');
-    const selection = resolveProfile({ config: profileFile }, envFor(h));
-    expect(selection.source).toBe('flag');
-    expect(selection.profileDir).toBe(dir);
-    expect(selection.profileFile).toBe(profileFile);
-    expect(selection.credentialsFile).toBe(join(dir, 'credentials.json'));
-    expect(selection.profileName).toBeNull();
-  });
-
   it('--profile выбирает существующий профиль', () => {
     const h = newHome();
     const dir = writeProfile(h, 'ci');
@@ -82,23 +68,6 @@ describe('выбор профиля — источники', () => {
 });
 
 describe('выбор профиля — приоритеты', () => {
-  it('--config сильнее --profile, TT_TESTOPS_PROFILE и общего файла', () => {
-    const h = newHome();
-    writeProfile(h, 'flag-profile');
-    writeProfile(h, 'env-profile');
-    writeProfile(h, 'common-profile');
-    writeCommon(h, 'common-profile');
-    const configFile = join(h, 'отдельный', 'profile.json');
-    mkdirSync(join(h, 'отдельный'), { recursive: true });
-    writeFileSync(configFile, '{}', 'utf8');
-    const selection = resolveProfile(
-      { config: configFile, profile: 'flag-profile' },
-      envFor(h, { TT_TESTOPS_PROFILE: 'env-profile' }),
-    );
-    expect(selection.source).toBe('flag');
-    expect(selection.profileFile).toBe(configFile);
-  });
-
   it('--profile сильнее TT_TESTOPS_PROFILE и общего файла', () => {
     const h = newHome();
     writeProfile(h, 'flag-profile');
@@ -123,12 +92,6 @@ describe('выбор профиля — приоритеты', () => {
 });
 
 describe('выбор профиля — ошибки с полным путём', () => {
-  it('--config на несуществующий файл', () => {
-    const h = newHome();
-    const missing = join(h, 'нет-такого', 'profile.json');
-    expect(() => resolveProfile({ config: missing }, envFor(h))).toThrow(missing);
-  });
-
   it('--profile на несуществующий профиль', () => {
     const h = newHome();
     const expectedDir = join(h, '.tt-testops', 'profiles', 'призрак');

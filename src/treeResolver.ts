@@ -1,11 +1,12 @@
-import type { CaseCache } from './cache.js';
-import type { AppConfig, ProjectResolver } from './config.js';
-import { ConfigError } from './errors.js';
+import type { AttachmentStore } from './attachmentStore.js';
+import { type AppConfig, resolveProject } from './config.js';
+import { ConfigError, serverOrNetwork } from './errors.js';
 import type { TestOpsClient } from './testops/client.js';
 import { type ProjectTree, type TreeChoice, pickTree, shapeOf, treeAdvice } from './tree.js';
 
 export class TreeResolver {
   private readonly byProject = new Map<number, ProjectTree | null>();
+  private readonly treesByProject = new Map<number, ProjectTree[]>();
   private flag: TreeChoice = null;
   private required = false;
   private shape: string | null = null;
@@ -14,19 +15,17 @@ export class TreeResolver {
   constructor(
     private readonly cfg: AppConfig,
     private readonly client: TestOpsClient,
-    private readonly cache: CaseCache | null,
-    private readonly refresh: boolean,
-    private readonly resolver: ProjectResolver,
+    private readonly store: AttachmentStore | null,
     private readonly onWarn: (message: string) => void,
   ) {}
 
-  use(flag: TreeChoice, fromLinks: Record<string, number> = {}, required = false): void {
+  use(flag: TreeChoice, fromLinks: Record<string, number>, required: boolean): void {
     this.flag = flag;
     this.required = required;
     this.fromLinks = {};
     for (const [key, tree] of Object.entries(fromLinks)) {
       try {
-        this.fromLinks[String(this.resolver.resolve(key))] = tree;
+        this.fromLinks[String(resolveProject(this.cfg, key))] = tree;
       } catch {
         this.fromLinks[key] = tree;
       }
@@ -65,19 +64,25 @@ export class TreeResolver {
 
   async requireFor(projects: Array<string | undefined>): Promise<void> {
     if (!this.required) return;
-    const ids = new Set(projects.map((project) => this.resolver.resolve(project)));
+    const ids = new Set(projects.map((project) => resolveProject(this.cfg, project)));
     for (const projectId of ids) await this.working(projectId);
   }
 
   async all(projectId: number): Promise<ProjectTree[]> {
-    const cached = this.refresh ? null : this.cache?.getTrees(this.cfg.baseUrl, projectId);
-    if (cached) return cached;
+    const known = this.treesByProject.get(projectId);
+    if (known) return known;
+    const trees = await this.fetchAll(projectId);
+    this.treesByProject.set(projectId, trees);
+    return trees;
+  }
+
+  private async fetchAll(projectId: number): Promise<ProjectTree[]> {
+    let trees: ProjectTree[];
     try {
-      const trees = await this.client.fetchTrees(projectId);
-      this.cache?.putTrees(this.cfg.baseUrl, projectId, trees);
-      return trees;
-    } catch {
-      const stale = this.cache?.getTrees(this.cfg.baseUrl, projectId, true);
+      trees = await this.client.fetchTrees(projectId);
+    } catch (error) {
+      if (!serverOrNetwork(error)) throw error;
+      const stale = this.store?.getTrees(this.cfg.baseUrl, projectId);
       if (stale) {
         this.onWarn(
           `список деревьев проекта ${projectId} получить не удалось — взят сохранённый, он может быть устаревшим`,
@@ -87,5 +92,13 @@ export class TreeResolver {
       this.onWarn(`список деревьев проекта ${projectId} получить не удалось — путь кейсов пуст`);
       return [];
     }
+    try {
+      await this.store?.putTrees(this.cfg.baseUrl, projectId, trees);
+    } catch (error) {
+      this.onWarn(
+        `список деревьев проекта ${projectId} не удалось сохранить: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return trees;
   }
 }

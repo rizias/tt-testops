@@ -10,8 +10,6 @@ export interface SettingsField {
   required: boolean;
   secret: boolean;
   default: unknown;
-  min?: number;
-  enumValues?: string[];
 }
 
 export const SETTINGS_FIELDS: SettingsField[] = [
@@ -23,15 +21,6 @@ export const SETTINGS_FIELDS: SettingsField[] = [
     required: true,
     secret: false,
     default: undefined,
-  },
-  {
-    key: 'kind',
-    path: 'servers.testops.kind',
-    type: 'string',
-    required: false,
-    secret: false,
-    default: 'allure-testops',
-    enumValues: ['allure-testops'],
   },
   {
     key: 'token',
@@ -74,46 +63,6 @@ export const SETTINGS_FIELDS: SettingsField[] = [
     required: false,
     secret: false,
     default: {},
-  },
-  {
-    key: 'timeoutSec',
-    path: 'limits.timeoutSec',
-    envVar: 'TT_TESTOPS_TIMEOUT_SEC',
-    type: 'number',
-    required: false,
-    secret: false,
-    default: 30,
-    min: 1,
-  },
-  {
-    key: 'maxCases',
-    path: 'limits.maxCases',
-    envVar: 'TT_TESTOPS_MAX_CASES',
-    type: 'number',
-    required: false,
-    secret: false,
-    default: 100,
-    min: 1,
-  },
-  {
-    key: 'concurrency',
-    path: 'limits.concurrency',
-    envVar: 'TT_TESTOPS_CONCURRENCY',
-    type: 'number',
-    required: false,
-    secret: false,
-    default: 8,
-    min: 1,
-  },
-  {
-    key: 'retries',
-    path: 'limits.retries',
-    envVar: 'TT_TESTOPS_RETRIES',
-    type: 'number',
-    required: false,
-    secret: false,
-    default: 3,
-    min: 0,
   },
   {
     key: 'formatFile',

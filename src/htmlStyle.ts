@@ -26,7 +26,7 @@ export const STYLE = `
 body{
   font:14px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
   color:var(--ink); background:var(--bg);
-  margin:0 auto; padding:32px 24px 64px; max-width:940px;
+  margin:0 auto; padding:32px 24px 64px; max-width:1200px;
   -webkit-text-size-adjust:100%;
 }
 button{font-family:inherit}
@@ -50,6 +50,8 @@ h1 .type{margin-right:7px}
 .facts dd{margin:0; font-size:inherit; line-height:inherit; min-width:0; overflow-wrap:anywhere}
 .crumb{color:var(--ink)}
 .rel{display:inline-flex; align-items:center; gap:5px; margin:0 10px 2px 0}
+.rel.rel_case{display:block; margin:0 0 2px}
+.rel.rel_case .pill{display:inline-block; white-space:nowrap; margin-right:6px; vertical-align:baseline}
 .pill{
   font-weight:500; font-size:10.5px; line-height:1.6; text-transform:uppercase; letter-spacing:.05em;
   background:var(--chip); color:var(--chip-ink); border-radius:4px; padding:0 5px;
@@ -83,24 +85,32 @@ h1 .type{margin-right:7px}
   margin:0 0 8px; opacity:.8; display:flex; align-items:center; gap:10px; white-space:nowrap;
 }
 .block h3::after{content:""; flex:1 1 auto; height:1px; background:color-mix(in srgb,var(--muted) 18%,transparent)}
-.blockBody{font-size:13.5px; line-height:1.6}
+.blockBody{font-size:13.5px; line-height:1.6; white-space:pre-wrap}
+.comments li.comment,details.case>summary .caseName{white-space:pre-wrap}
 .blockBody>p:first-child{margin-top:0}
 p{margin:.6em 0}
 
-.block.scenario ol{list-style:none; counter-reset:step; margin:0; padding:0}
-.block.scenario li{counter-increment:step; position:relative; padding:3px 0 3px 34px; margin:0}
-.block.scenario li::before{
-  content:counter(step) "."; position:absolute; left:0; top:3px; width:26px; text-align:right;
-  font:500 13px/1.65 var(--mono); color:var(--muted); font-variant-numeric:tabular-nums;
+.block.scenario ol.steps,.block.scenario ol.expList{list-style:none; margin:0; padding:0}
+.steps>li,.expList>li{padding:3px 0 3px 34px; margin:0; display:flow-root}
+.steps>li::before,.expList>li::before{
+  content:attr(data-n); float:left; width:26px; margin:0 8px 0 -34px; text-align:right;
+  font:500 13px/21.6px var(--mono); color:var(--muted); font-variant-numeric:tabular-nums;
 }
-.block.scenario li>ol{margin:4px 0 2px; padding-left:10px; border-left:1px solid var(--rule)}
+.steps>li>:first-child,.expList>li>:first-child{margin-top:0}
+.stepExtra>p{margin:.2em 0}
+p.para{margin:0}
+.tc-gray{color:#6b7280}.tc-brown{color:#8b5a2b}.tc-orange{color:#c2410c}.tc-yellow{color:#b7791f}
+.tc-green{color:#15803d}.tc-blue{color:#1d4ed8}.tc-purple{color:#7e22ce}.tc-pink{color:#be185d}.tc-red{color:#b91c1c}
+.steps>li>ol.steps{margin:4px 0 2px; padding-left:10px; border-left:1px solid var(--rule)}
 .exp{margin:4px 0 2px; padding-left:10px; border-left:1px solid var(--rule)}
 .expLabel{
   font-weight:600; font-size:11px; line-height:1.6; color:var(--muted);
   letter-spacing:.02em; margin:0 0 1px;
 }
 .expItem{padding:1px 0}
-.block.scenario li>ol>li{padding-left:32px}
+.block.scenario .exp .expList{margin:0}
+.steps>li>ol.steps>li{padding-left:32px}
+.steps>li>ol.steps>li::before{margin-left:-32px; margin-right:6px}
 
 code{
   font:13px/1.5 var(--mono); color:var(--code-ink);

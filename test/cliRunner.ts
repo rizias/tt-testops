@@ -31,7 +31,7 @@ export function makeProfileHome(options: ProfileOptions = {}): string {
     join(profileDir, 'profile.json'),
     JSON.stringify({
       servers: { testops: { baseUrl: options.baseUrl ?? 'https://ts.example' } },
-      projects: options.projects ?? { '14': 'WEB' },
+      projects: options.projects ?? { '1': 'WEB' },
     }),
     'utf8',
   );

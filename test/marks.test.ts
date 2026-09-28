@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RawCase, TestCase } from '../src/model.js';
+import { normalizeCase } from '../src/normalize.js';
 import { defaultProfile } from '../src/profile.js';
 import { renderBatch, renderCase } from '../src/render.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 const legacyCase = {
   id: '1',
@@ -11,20 +13,21 @@ const legacyCase = {
   type: '',
   layer: 'Web',
   tags: [],
-  links: [],
+  attachments: [],
   linkRefs: [],
   issues: [],
   people: [],
   relatedCases: [],
+  comments: [],
   attributes: [],
   description: 'Описание',
   precondition: '',
+  scenario: stepsOf('Шаг один', 'Шаг два'),
   scenarioLines: ['1. Шаг один', '2. Шаг два'],
   expectedResult: 'Результат',
-  scenarioSource: 'rawMarkdown',
+  scenarioSource: 'inlineSteps',
   automated: false,
   isLegacy: true,
-  declaredManual: false,
 } as unknown as TestCase;
 
 const marksOff = { ...defaultProfile, showMarks: false };
@@ -65,19 +68,19 @@ const rawEmpty: RawCase = {
 
 describe('batch summary is a list of marks', () => {
   it('is printed when marks are on', () => {
-    expect(renderBatch([rawEmpty], defaultProfile, 'https://x.test')).toContain(
+    expect(renderBatch([rawEmpty], defaultProfile, 'https://x.test', [normalizeCase(rawEmpty, defaultProfile)], () => null, {})).toContain(
       defaultProfile.batch.summaryHeading,
     );
   });
 
   it('is gone when marks are off, cases stay', () => {
-    const off = renderBatch([rawEmpty], marksOff, 'https://x.test');
+    const off = renderBatch([rawEmpty], marksOff, 'https://x.test', [normalizeCase(rawEmpty, marksOff)], () => null, {});
     expect(off).not.toContain(defaultProfile.batch.summaryHeading);
     expect(off).not.toContain(defaultProfile.batch.divider);
     expect(off).toContain('Пустой');
   });
 
   it('keeps the frozen "Нет шагов" literal with marks off', () => {
-    expect(renderBatch([rawEmpty], marksOff, 'https://x.test')).toContain('Нет шагов');
+    expect(renderBatch([rawEmpty], marksOff, 'https://x.test', [normalizeCase(rawEmpty, marksOff)], () => null, {})).toContain('Нет шагов');
   });
 });

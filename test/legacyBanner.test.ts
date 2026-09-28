@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
 import { renderCase } from '../src/render.js';
+import { stepsOf } from './scenarioFixtures.js';
 
-describe('пометка в Markdown различает два старых состояния', () => {
+describe('пометка старого формата в Markdown одна на оба источника', () => {
   const legacy = {
     id: '1',
     name: 'Кейс',
@@ -12,36 +13,33 @@ describe('пометка в Markdown различает два старых со
     automated: false,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
+    issues: [],
+    people: [],
+    relatedCases: [],
+    comments: [],
     attributes: [],
     isLegacy: true,
-    declaredManual: false,
     description: '',
     precondition: '',
     expectedResult: '',
-    scenarioSource: 'rawMarkdown',
+    scenarioSource: 'inlineSteps',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
   } as unknown as TestCase;
 
-  it('кейс не объявлен ручным — старый формат', () => {
+  it('сценарий в старом редакторе — старый формат', () => {
     expect(renderCase(legacy, defaultProfile)).toContain('**Старый формат**');
   });
 
-  it('кейс объявлен ручным, а сценарий сырой — несогласованный формат', () => {
-    const out = renderCase({ ...legacy, declaredManual: true }, defaultProfile);
-    expect(out).toContain('**Несогласованный формат**');
-    expect(out).not.toContain('**Старый формат**');
+  it('customSteps.md на шаге кейса нового редактора — тот же старый формат', () => {
+    const out = renderCase({ ...legacy, scenarioSource: 'newSteps' }, defaultProfile);
+    expect(out).toContain('**Старый формат**');
   });
 
   it('с выключенными пометками не выводится ни одна', () => {
-    const out = renderCase(
-      { ...legacy, declaredManual: true },
-      {
-        ...defaultProfile,
-        showMarks: false,
-      },
-    );
+    const out = renderCase(legacy, { ...defaultProfile, showMarks: false });
     expect(out).not.toContain('формат**');
   });
 });

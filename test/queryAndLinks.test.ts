@@ -1,22 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { parseFlags, projectsInPlay, treesFromLinks } from '../src/args.js';
+import { parseFlags } from '../src/args.js';
+import { treesFromLinks } from '../src/querySources.js';
 import type { AppConfig } from '../src/config.js';
 import { Gateway } from '../src/gateway.js';
-import { caseId, testOpsUrl } from '../src/htmlCase.js';
+import { caseId, caseUrl } from '../src/htmlCase.js';
 import { parseFilterLink } from '../src/links.js';
 import type { TestCase } from '../src/model.js';
 import { extractCfConditions } from '../src/queryCheck.js';
 import type { TestOpsClient } from '../src/testops/client.js';
+import { listedIds } from './listedCases.js';
 
 const cfgR12: AppConfig = {
   baseUrl: 'https://ts.example',
   token: 'tok',
-  defaultProjectId: 14,
-  projects: { '14': 'WEB' },
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
+  defaultProjectId: 1,
+  projects: { '1': 'WEB' },
 } as unknown as AppConfig;
 
 const linkOf = (project: number, tree: number): string => {
@@ -67,14 +65,25 @@ describe('похожесть имени поля', () => {
   });
 });
 
-describe('ссылка без условия запроса', () => {
-  it('в ошибке названы и условия, и параметры адреса', async () => {
+describe('ссылка без условия aql, но с другими условиями', () => {
+  it('больше не ошибка: условие передаётся дальше как есть', async () => {
     const { parseFilterLink } = await import('../src/links.js');
     const search = encodeURIComponent(
       Buffer.from(JSON.stringify([{ id: 'status', value: 'Active' }]), 'utf8').toString('base64'),
     );
-    const link = `https://ts.example/project/14/test-cases?treeId=41&search=${search}`;
-    expect(() => parseFilterLink(link)).toThrow(/status/);
+    const link = `https://ts.example/project/1/test-cases?treeId=41&search=${search}`;
+    const got = parseFilterLink(link);
+    expect(got.rql).toBe('');
+    expect(got.conditions).toEqual([{ id: 'status', value: 'Active' }]);
+    expect(got.warnings.join(' ')).toContain('treeId');
+  });
+});
+
+describe('ссылка совсем без запроса', () => {
+  it('называет параметры, которые в ней есть', async () => {
+    const { parseFilterLink } = await import('../src/links.js');
+    const link = 'https://ts.example/project/1/test-cases?treeId=41';
+    expect(() => parseFilterLink(link)).toThrow(/нет запроса/);
     expect(() => parseFilterLink(link)).toThrow(/treeId/);
   });
 });
@@ -83,21 +92,22 @@ describe('неприменённые проекты при выборке по �
   it('названы одним сообщением, а не по одному на список', async () => {
     const warnings: string[] = [];
     const client = {
+      countCases: async () => 0,
       fetchOverview: async (id: string) =>
-        ({ id: Number(id), projectId: 14, lastModifiedDate: 1 }) as never,
+        ({ id: Number(id), projectId: 1, lastModifiedDate: 1 }) as never,
       fetchCaseFromOverview: async (ov: { id: number }) =>
         ({ overview: ov, steps: null, comments: [] }) as never,
       fetchTrees: async () => [],
     } as unknown as TestOpsClient;
-    const gw = new Gateway(cfgR12, client, undefined, null, false, (m) => warnings.push(m));
-    await gw.searchCasesJson([
-      { project: '14', rql: 'id in [1]' },
-      { project: '85', rql: 'id in [2]' },
+    const gw = new Gateway(cfgR12, client, undefined, null, (m) => warnings.push(m));
+    await listedIds(gw, [
+      { project: '1', rql: 'id in [1]' },
+      { project: '2', rql: 'id in [2]' },
     ]);
     const about = warnings.filter((w) => w.includes('не применял'));
     expect(about).toHaveLength(1);
-    expect(about[0]).toContain('14');
-    expect(about[0]).toContain('85');
+    expect(about[0]).toContain('1');
+    expect(about[0]).toContain('2');
   });
 });
 
@@ -114,51 +124,39 @@ describe('дерево из ссылки', () => {
     const trees = treesFromLinks({
       _: [],
       projects: [],
+      used: [],
       queries: [
-        { kind: 'inline', value: link(14, 41), afterProject: -1 },
-        { kind: 'inline', value: link(85, 153), afterProject: -1 },
+        { kind: 'inline', value: link(1, 41), afterProject: -1 },
+        { kind: 'inline', value: link(2, 153), afterProject: -1 },
       ],
     });
-    expect(trees).toEqual({ '14': 41, '85': 153 });
+    expect(trees).toEqual({ '1': 41, '2': 153 });
   });
 });
 
 describe('дерево из ссылки принадлежит проекту, в котором пойдёт запрос', () => {
   it('явный --project становится ключом дерева', () => {
-    const f = parseFlags(['--project', '14', '--rql', linkOf(85, 7)]);
-    expect(treesFromLinks(f)).toEqual({ '14': 7 });
+    const f = parseFlags(['--project', '1', '--rql', linkOf(2, 7)]);
+    expect(treesFromLinks(f)).toEqual({ '1': 7 });
   });
 
   it('без явного проекта ключом остаётся проект ссылки', () => {
-    const f = parseFlags(['--rql', linkOf(85, 7)]);
-    expect(treesFromLinks(f)).toEqual({ '85': 7 });
-  });
-});
-
-describe('проект, пришедший только из ссылки', () => {
-  it('попадает в список проверяемых проектов', () => {
-    const f = parseFlags(['--rql', linkOf(85, 7)]);
-    expect(projectsInPlay(f)).toEqual(['85']);
-  });
-
-  it('без запросов проверяется проект по умолчанию', () => {
-    expect(projectsInPlay(parseFlags([]))).toEqual([undefined]);
+    const f = parseFlags(['--rql', linkOf(2, 7)]);
+    expect(treesFromLinks(f)).toEqual({ '2': 7 });
   });
 });
 
 describe('ссылка на кейс без проекта', () => {
   it('не строится вовсе, а не ведёт в пустоту', () => {
     const tc = { id: '10001', projectId: null } as unknown as TestCase;
-    expect(testOpsUrl(tc, 'https://ts.example')).toBeNull();
     const html = caseId(tc, 'https://ts.example');
     expect(html).toBe('<span class="id">10001</span>');
     expect(html).not.toContain('/project//');
   });
 
   it('с проектом строится как прежде', () => {
-    const tc = { id: '10001', projectId: 14 } as unknown as TestCase;
-    expect(testOpsUrl(tc, 'https://ts.example')).toBe(
-      'https://ts.example/project/14/test-cases/10001',
+    expect(caseUrl('https://ts.example', 1, '10001')).toBe(
+      'https://ts.example/project/1/test-cases/10001',
     );
   });
 });
@@ -171,7 +169,7 @@ describe('непереносимые части ссылки', () => {
         'utf8',
       ).toString('base64'),
     );
-    const link = `https://ts.example/project/14/test-cases?treeId=41&sort=id&layout=grid&search=${search}`;
+    const link = `https://ts.example/project/1/test-cases?treeId=41&sort=id&layout=grid&search=${search}`;
     const warnings = parseFilterLink(link).warnings.join(' ');
     expect(warnings).toContain('treeId=41');
     expect(warnings).toContain('sort');

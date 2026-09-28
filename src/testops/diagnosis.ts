@@ -39,3 +39,10 @@ export async function explainRejectedQuery(
   }
   return lines.join('\n');
 }
+
+export function explainRejectedConditions(ids: string[], filterId?: number): string {
+  const lines = ['TestOps отверг условия поиска.'];
+  if (ids.length) lines.push(`Условия: ${ids.join(', ')}.`);
+  if (filterId !== undefined) lines.push(`Сохранённый фильтр: ${filterId}.`);
+  return lines.join('\n');
+}

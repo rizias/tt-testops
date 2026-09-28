@@ -9,10 +9,6 @@ const cfg = {
   token: 't',
   projects: {},
   people: {},
-  timeoutMs: 100,
-  maxCases: 10,
-  pageSize: 10,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 const auth = {
@@ -25,74 +21,16 @@ const auth = {
     }) as PortResponse,
 };
 
-const clientWith = (get: TestOpsPort['get']) => {
-  const pauses: number[] = [];
-  const client = new TestOpsClient(cfg, { get, ...auth } as TestOpsPort, async (ms) => {
-    pauses.push(ms);
-  });
-  return { client, pauses };
-};
-
-const bytes = () =>
-  ({
-    ok: true,
-    status: 200,
-    json: async () => ({}),
-    text: async () => '',
-    arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-    headers: { get: () => 'image/png' },
-  }) as unknown as PortResponse;
+const clientWith = (get: TestOpsPort['get']) =>
+  new TestOpsClient(cfg, { get, ...auth } as TestOpsPort);
 
 const failure = (status: number) =>
   ({ ok: false, status, json: async () => ({}), text: async () => '' }) as unknown as PortResponse;
 
 describe('вложение, которое не скачалось', () => {
-  it('обрыв связи проходит со второй попытки, пауза 400 мс', async () => {
+  it('404: вложения на сервере нет', async () => {
     let calls = 0;
-    const { client, pauses } = clientWith(async () => {
-      calls++;
-      if (calls === 1) throw new Error('связь оборвалась');
-      return bytes();
-    });
-
-    const got = await client.fetchAttachment(7);
-
-    expect(got.ok).toBe(true);
-    expect(calls).toBe(2);
-    expect(pauses).toEqual([400]);
-  });
-
-  it('перегруженный сервер повторяется трижды, потом сдаётся с причиной', async () => {
-    let calls = 0;
-    const { client, pauses } = clientWith(async () => {
-      calls++;
-      return failure(503);
-    });
-
-    const got = await client.fetchAttachment(8);
-
-    expect(got.ok).toBe(false);
-    expect(calls).toBe(4);
-    expect(pauses).toEqual([400, 1200, 3600]);
-    if (!got.ok) expect(got.reason).toContain('503');
-  });
-
-  it('перегрузка 429 тоже повторяется', async () => {
-    let calls = 0;
-    const { client } = clientWith(async () => {
-      calls++;
-      return calls < 4 ? failure(429) : bytes();
-    });
-
-    const got = await client.fetchAttachment(10);
-
-    expect(got.ok).toBe(true);
-    expect(calls).toBe(4);
-  });
-
-  it('404 не повторяется: вложения на сервере нет', async () => {
-    let calls = 0;
-    const { client, pauses } = clientWith(async () => {
+    const client = clientWith(async () => {
       calls++;
       return failure(404);
     });
@@ -101,7 +39,6 @@ describe('вложение, которое не скачалось', () => {
 
     expect(got.ok).toBe(false);
     expect(calls).toBe(1);
-    expect(pauses).toEqual([]);
     if (!got.ok) expect(got.reason).toContain('404');
   });
 });

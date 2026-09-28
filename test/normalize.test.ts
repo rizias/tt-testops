@@ -43,7 +43,7 @@ describe('путь собирается из рабочего дерева', () 
     const tc = normalizeCase(
       caseWith([
         field(10, 'Уровень 1', 'Первый'),
-        field(-1, 'Epic', 'Тема'),
+        field(-1, 'Поле0', 'Тема'),
         field(-2, 'Feature', 'Возможность'),
       ]),
       defaultProfile,
@@ -51,7 +51,7 @@ describe('путь собирается из рабочего дерева', () 
     );
     expect(tc.path).toEqual(['Первый']);
     expect(tc.attributes).toEqual([
-      { name: 'Epic', value: 'Тема' },
+      { name: 'Поле0', value: 'Тема' },
       { name: 'Feature', value: 'Возможность' },
     ]);
   });

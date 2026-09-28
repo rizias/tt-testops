@@ -47,8 +47,8 @@ describe('скилл не ставится глобально', () => {
         ask.chooseTargets({
           skills: ['tt-testops'],
           options: [
-            { id: 'project', label: 'этот проект', roots: [] },
-            { id: 'custom', label: 'путь', roots: [] },
+            { id: 'project', roots: [] },
+            { id: 'custom', roots: [] },
           ],
         }),
       ).rejects.toThrow('Скилл не ставится глобально');
@@ -62,8 +62,8 @@ describe('скилл не ставится глобально', () => {
     const chosen = await ask.chooseTargets({
       skills: ['tt-testops'],
       options: [
-        { id: 'project', label: 'этот проект', roots: [] },
-        { id: 'custom', label: 'путь', roots: [] },
+        { id: 'project', roots: [] },
+        { id: 'custom', roots: [] },
       ],
     });
     expect(chosen).toEqual([{ id: 'custom', root }]);

@@ -1,8 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { ConfigError } from './errors.js';
-import { isFilterLink, parseFilterLink } from './links.js';
-import { idsOnly } from './queryCheck.js';
-import { buildSources, type QueryToken, type Source } from './sources.js';
 import type { TreeChoice } from './tree.js';
 
 export interface RawQuery {
@@ -23,43 +18,18 @@ export interface Flags {
   out?: string;
   noMarks?: boolean;
   for?: string;
-  refresh?: boolean;
 
   tree?: TreeChoice;
 
   find?: string;
 
+  text?: string;
+
   profile?: string;
-  config?: string;
+  used: string[];
 }
 
-const FORMATS = ['markdown', 'json', 'html', 'raw'];
-
-export interface SettingsFlags {
-  profile?: string;
-  config?: string;
-  rest: string[];
-}
-
-export function extractSettingsFlags(args: string[]): SettingsFlags {
-  const out: SettingsFlags = { rest: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === undefined) continue;
-    if (a === '--profile' || a === '--config') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        throw new Error(`Флагу ${a} нужно значение.`);
-      }
-      if (a === '--profile') out.profile = value;
-      else out.config = value;
-      i++;
-    } else {
-      out.rest.push(a);
-    }
-  }
-  return out;
-}
+const FORMATS = ['markdown', 'html', 'raw'];
 
 function treeFlag(raw: string): TreeChoice {
   const text = raw.trim();
@@ -104,17 +74,21 @@ const VALUE_FLAGS: Record<string, FlagSetter> = {
   '--find': (f, v) => {
     f.find = v;
   },
+  '--text': (f, v) => {
+    if (!v.trim()) throw new Error('Флагу --text нужна непустая фраза для поиска.');
+    f.text = v;
+  },
   '--tree': (f, v) => {
     f.tree = treeFlag(v);
+  },
+  '--profile': (f, v) => {
+    f.profile = v;
   },
 };
 
 const BOOLEAN_FLAGS: Record<string, (f: Flags) => void> = {
   '--no-marks': (f) => {
     f.noMarks = true;
-  },
-  '--refresh': (f) => {
-    f.refresh = true;
   },
 };
 
@@ -131,14 +105,16 @@ function valueAfter(args: string[], index: number): string {
 }
 
 export function parseFlags(args: string[]): Flags {
-  const f: Flags = { _: [], projects: [], queries: [] };
+  const f: Flags = { _: [], projects: [], queries: [], used: [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === undefined || a === '') continue;
     const withValue = VALUE_FLAGS[a];
     const bare = BOOLEAN_FLAGS[a];
+    if (withValue || bare) f.used.push(a);
     if (withValue) withValue(f, valueAfter(args, i++));
     else if (bare) bare(f);
+    else if (a.startsWith('--')) throw new Error(`Незнакомый флаг: ${a}.`);
     else {
       f._.push(a);
       addQuery(f, 'inline', a);
@@ -147,104 +123,32 @@ export function parseFlags(args: string[]): Flags {
   return f;
 }
 
-function resolveQuery(raw: string, project?: string): Source {
-  if (!isFilterLink(raw)) return { rql: raw, project };
-  const parsed = parseFilterLink(raw);
-  for (const w of parsed.warnings) process.stderr.write(`Предупреждение: ${w}\n`);
-  return {
-    rql: parsed.rql,
-    project: project ?? (parsed.projectId === null ? undefined : String(parsed.projectId)),
-  };
-}
+const COMMON_FLAGS = ['--profile', '--out'];
+const QUERY_FLAGS = ['--project', '--rql', '--rql-file', '--text'];
 
-function linkOf(q: RawQuery): { treeId: number | null; projectId: number | null } {
-  const text = q.kind === 'file' ? readFileSync(q.value, 'utf8').trim() : q.value;
-  if (!isFilterLink(text)) return { treeId: null, projectId: null };
-  try {
-    const parsed = parseFilterLink(text);
-    return { treeId: parsed.treeId, projectId: parsed.projectId };
-  } catch {
-    return { treeId: null, projectId: null };
+const COMMAND_FLAGS: Record<string, string[]> = {
+  case: ['--format', '--no-marks', '--tree'],
+  list: ['--format', '--no-marks', '--tree', '--limit', ...QUERY_FLAGS],
+  count: QUERY_FLAGS,
+  link: QUERY_FLAGS,
+  fields: ['--project', '--find'],
+  trees: ['--project'],
+  projects: [],
+  attachments: [],
+  config: [],
+  setup: [],
+  update: [],
+  init: ['--for'],
+};
+
+export function validateFlags(cmd: string, f: Flags): void {
+  const allowed = new Set([...COMMON_FLAGS, ...(COMMAND_FLAGS[cmd] ?? [])]);
+  const stray = f.used.find((flag) => !allowed.has(flag));
+  if (stray !== undefined) throw new Error(`Флаг ${stray} у команды ${cmd} не используется.`);
+  if (f.format === 'raw' && cmd !== 'case') {
+    throw new Error(`Формат raw для команды ${cmd} не поддерживается — он только для case.`);
   }
-}
-
-function projectKeys(f: Flags, q: RawQuery, fromLink: number | null): string[] {
-  if (f.queries.length <= 1 && f.projects.length) return f.projects;
-  const explicit = q.afterProject >= 0 ? f.projects[q.afterProject] : undefined;
-  if (explicit !== undefined) return [explicit];
-  return fromLink === null ? [] : [String(fromLink)];
-}
-
-export function treesFromLinks(f: Flags): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const q of f.queries) {
-    const { treeId, projectId } = linkOf(q);
-    if (treeId === null) continue;
-    for (const key of projectKeys(f, q, projectId)) out[key] = treeId;
+  if (f.format === 'html' && cmd !== 'case' && cmd !== 'list') {
+    throw new Error(`Формат html для команды ${cmd} не поддерживается — он для case и list.`);
   }
-  return out;
-}
-
-export function projectsInPlay(f: Flags): Array<string | undefined> {
-  const out = new Set<string | undefined>();
-  const queryText = (q: RawQuery) =>
-    q.kind === 'file' ? readFileSync(q.value, 'utf8').trim() : q.value;
-  if (f.queries.length && f.queries.every((q) => idsOnly(queryText(q)))) return [];
-  for (const q of f.queries) {
-    const { projectId } = linkOf(q);
-    for (const key of projectKeys(f, q, projectId)) out.add(key);
-  }
-  for (const p of f.projects) out.add(p);
-  if (!out.size) out.add(undefined);
-  return [...out];
-}
-export function sourcesOf(f: Flags): Source[] {
-  const queries = f.queries.map((q) => {
-    const text = q.kind === 'file' ? readFileSync(q.value, 'utf8').trim() : q.value;
-    return { ...resolveQuery(text), afterProject: q.afterProject };
-  });
-
-  const tokens: QueryToken[] = queries.map((q) => ({
-    text: q.rql,
-    afterProject: q.afterProject,
-  }));
-  if (queries.length <= 1) {
-    if (f.projects.length || queries[0]?.project === undefined) {
-      return buildSources(f.projects, tokens);
-    }
-    return [{ rql: queries[0].rql, project: queries[0].project }];
-  }
-
-  const projectsFromLinks = queries.filter(
-    (query) => query.afterProject < 0 && query.project !== undefined,
-  ).length;
-  const projectCount = f.projects.length + projectsFromLinks;
-  if (projectCount !== queries.length) {
-    throw new ConfigError(
-      `Проектов ${projectCount}, а запросов ${queries.length}. Либо один запрос на все проекты, либо по запросу на каждый проект.`,
-    );
-  }
-
-  const used = new Set<number>();
-  const sources: Source[] = [];
-  for (const query of queries) {
-    if (query.afterProject >= 0) {
-      used.add(query.afterProject);
-      sources.push({ rql: query.rql, project: f.projects[query.afterProject] });
-    } else if (query.project !== undefined) {
-      sources.push({ rql: query.rql, project: query.project });
-    } else {
-      throw new ConfigError(
-        `Запрос «${query.rql}» написан раньше первого --project — непонятно, к какому проекту он относится.`,
-      );
-    }
-  }
-
-  const orphan = f.projects.findIndex((_, index) => !used.has(index));
-  if (orphan >= 0) {
-    throw new ConfigError(
-      `Проекту ${f.projects[orphan]} не досталось запроса. Допишите ему --rql или --rql-file.`,
-    );
-  }
-  return sources;
 }

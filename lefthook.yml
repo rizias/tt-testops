@@ -3,9 +3,7 @@ pre-commit:
   commands:
     lint:
       glob: "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
-      run: npx eslint --max-warnings 0 --no-warn-ignored {staged_files}
-    sizes:
-      run: node scripts/size-check.mjs
+      run: npx eslint --max-warnings 0 {staged_files}
     secrets:
       run: node scripts/gitleaks-if-present.mjs
 

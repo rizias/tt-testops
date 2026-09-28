@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { scenarioStateOf } from '../src/audit.js';
-import { toJson } from '../src/json.js';
 import type { RawCase, ScenarioSource, TestCase } from '../src/model.js';
 
 const testCase = (scenarioSource: ScenarioSource): TestCase =>
@@ -12,7 +11,7 @@ const testCase = (scenarioSource: ScenarioSource): TestCase =>
     type: '',
     layer: '',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
     issues: [],
     people: [],
@@ -33,16 +32,8 @@ describe('scenarioStateOf', () => {
     expect(scenarioStateOf(testCase('newSteps'), rawCase(true))).toBe('current');
   });
 
-  it('raw markdown on a case not declared manual -> old format', () => {
-    expect(scenarioStateOf(testCase('rawMarkdown'), rawCase(false))).toBe('oldFormat');
-  });
-
   it('inline steps on a case not declared manual -> old format', () => {
     expect(scenarioStateOf(testCase('inlineSteps'), rawCase(false))).toBe('oldFormat');
-  });
-
-  it('raw markdown on a case declared manual -> inconsistent format', () => {
-    expect(scenarioStateOf(testCase('rawMarkdown'), rawCase(true))).toBe('inconsistentFormat');
   });
 
   it('no scenario at all -> empty', () => {
@@ -52,24 +43,9 @@ describe('scenarioStateOf', () => {
 
   it('marks every non-current state as needing a rewrite', () => {
     const states = [
-      scenarioStateOf(testCase('rawMarkdown'), rawCase(false)),
-      scenarioStateOf(testCase('rawMarkdown'), rawCase(true)),
+      scenarioStateOf(testCase('inlineSteps'), rawCase(false)),
       scenarioStateOf(testCase('empty'), rawCase(true)),
     ];
     expect(states.every((s) => s !== 'current')).toBe(true);
-  });
-});
-
-describe('scenario state in the structured output', () => {
-  it('is its own field', () => {
-    const json = toJson(testCase('rawMarkdown'), 'oldFormat');
-    expect(json.scenarioState).toBe('oldFormat');
-  });
-
-  it('leaves the existing fields in place', () => {
-    const json = toJson(testCase('newSteps'), 'current');
-    expect(json.id).toBe('1');
-    expect(json.scenarioSource).toBe('newSteps');
-    expect(json.fields).toBeDefined();
   });
 });

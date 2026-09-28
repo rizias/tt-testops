@@ -1,14 +1,12 @@
-import type { CaseCache } from './cache.js';
-import type { AppConfig, ProjectResolver } from './config.js';
-import { inspectEmpty } from './emptyResult.js';
-import { ApiError, QueryError } from './errors.js';
-import type { RawCase, RawOverview } from './model.js';
-import { idsOnly } from './queryCheck.js';
-import type { Source } from './sources.js';
+import { type AppConfig, resolveProject } from './config.js';
+import { explainEmpty } from './emptyResult.js';
+import { caseUnavailable, skippable } from './errors.js';
+import type { RawCase } from './model.js';
+import { directIds, type Source } from './sources.js';
 import type { SearchHit, TestOpsClient } from './testops/client.js';
 
-function skippable(e: unknown): boolean {
-  return e instanceof ApiError && (e.kind === 'not_found' || e.statusCode === 403);
+function byName(a: RawCase, b: RawCase): number {
+  return (a.overview.name ?? '').localeCompare(b.overview.name ?? '', 'ru');
 }
 
 function firstTime<T>(seen: Set<T>, key: T): boolean {
@@ -17,17 +15,32 @@ function firstTime<T>(seen: Set<T>, key: T): boolean {
   return true;
 }
 
+export interface SourceResult {
+  source: Source;
+  cases: RawCase[];
+}
+
+interface OneResult {
+  raw: RawCase | null;
+  failed: boolean;
+}
+
 export class CaseFetcher {
   constructor(
     private readonly cfg: AppConfig,
     private readonly client: TestOpsClient,
-    private readonly cache: CaseCache | null,
-    private readonly refresh: boolean,
-    private readonly resolver: ProjectResolver,
     private readonly onWarn: (message: string) => void,
   ) {}
 
+  private perSource = new Map<Source, RawCase[]>();
+
+  resultOf(source: Source): SourceResult | undefined {
+    const cases = this.perSource.get(source);
+    return cases ? { source, cases } : undefined;
+  }
+
   async fetchSources(sources: Source[], limit?: number): Promise<RawCase[]> {
+    this.perSource = new Map();
     const out: RawCase[] = [];
     const seen = new Set<number>();
 
@@ -35,12 +48,13 @@ export class CaseFetcher {
     this.warnIgnoredProjects(sources);
 
     for (const source of sources) {
-      const ids = idsOnly(source.rql);
+      const ids = directIds(source);
       if (ids && !firstTime(doneByIds, ids.join(','))) continue;
 
       const cases = ids
-        ? await this.fetchByIds(ids, source.project, limit)
+        ? await this.fetchByIds(ids, limit)
         : await this.fetchBySearch(source, limit);
+      this.perSource.set(source, cases);
 
       if (!ids && !cases.length && sources.length > 1) {
         this.onWarn(`в проекте ${this.describe(source.project)} по запросу кейсов не найдено`);
@@ -56,7 +70,7 @@ export class CaseFetcher {
   private warnIgnoredProjects(sources: Source[]): void {
     const ignored = new Set<string>();
     for (const source of sources) {
-      if (idsOnly(source.rql) && source.project) ignored.add(source.project);
+      if (directIds(source) && source.project) ignored.add(source.project);
     }
     if (!ignored.size) return;
     const list = [...ignored];
@@ -76,38 +90,21 @@ export class CaseFetcher {
   }
 
   private async fetchBySearch(source: Source, limit?: number): Promise<RawCase[]> {
-    const projectId = this.resolver.resolve(source.project);
-    const requested = limit ?? this.cfg.maxCases;
-    const size = Math.min(requested, this.cfg.maxCases);
-    if (requested > this.cfg.maxCases) {
-      this.onWarn(
-        `предел ${requested} уменьшен до ${this.cfg.maxCases}: столько разрешает TT_TESTOPS_MAX_CASES`,
-      );
+    const projectId = resolveProject(this.cfg, source.project);
+    const size = limit ?? Number.POSITIVE_INFINITY;
+    const { hits, total } = await this.client.searchAll(source, projectId, size);
+    if (limit !== undefined && total > hits.length) {
+      this.onWarn(`взято ${hits.length} кейсов из ${total} найденных: задан предел ${size}`);
     }
-    const { hits, total } = await this.client.searchAll(source.rql, projectId, size);
-    if (total > hits.length) {
-      const reason =
-        requested > this.cfg.maxCases
-          ? `предел TT_TESTOPS_MAX_CASES равен ${this.cfg.maxCases}`
-          : `задан предел ${size}`;
-      this.onWarn(`взято ${hits.length} кейсов из ${total} найденных: ${reason}`);
-    } else if (hits.length === size) {
-      this.onWarn(`взято ${hits.length} кейсов — ровно заданный предел; выборка могла быть шире`);
-    }
-    if (hits.length) return this.fetchWithCache(hits, projectId);
-
-    return this.afterEmpty(source, projectId, size);
+    if (hits.length) return this.fetchBodies(hits);
+    await explainEmpty(this.client, source.rql, projectId);
+    return [];
   }
 
-  private async fetchByIds(all: number[], _project?: string, limit?: number): Promise<RawCase[]> {
-    const cap = Math.min(limit ?? this.cfg.maxCases, this.cfg.maxCases);
-    const ids = cap < all.length ? all.slice(0, cap) : all;
+  private async fetchByIds(all: number[], limit?: number): Promise<RawCase[]> {
+    const ids = limit !== undefined && limit < all.length ? all.slice(0, limit) : all;
     if (ids.length < all.length) {
-      const reason =
-        limit !== undefined && limit <= this.cfg.maxCases
-          ? `предел ${limit}`
-          : `предел TT_TESTOPS_MAX_CASES равен ${this.cfg.maxCases}`;
-      this.onWarn(`${reason}: из ${all.length} идентификаторов взяты первые ${ids.length}`);
+      this.onWarn(`предел ${limit}: из ${all.length} идентификаторов взяты первые ${ids.length}`);
     }
 
     const found = new Map<number, RawCase>();
@@ -115,9 +112,9 @@ export class CaseFetcher {
 
     const got = await Promise.all(ids.map((id) => this.oneById(id)));
     ids.forEach((id, k) => {
-      const raw = got[k];
-      if (raw) found.set(id, raw);
-      else missing.push(id);
+      const result = got[k];
+      if (result?.raw) found.set(id, result.raw);
+      else if (!result?.failed) missing.push(id);
     });
 
     if (missing.length) {
@@ -125,77 +122,45 @@ export class CaseFetcher {
         `не найдены: ${missing.join(', ')} — такого кейса нет, он удалён или к нему нет доступа`,
       );
     }
-    return ids.map((id) => found.get(id)).filter((c): c is RawCase => !!c);
+    const result = ids
+      .map((id) => found.get(id))
+      .filter((c): c is RawCase => !!c)
+      .sort(byName);
+    return result;
   }
 
   async one(id: number): Promise<RawCase | null> {
-    return this.oneById(id, true);
+    return (await this.oneById(id, true)).raw;
   }
 
-  private async oneById(id: number, strict = false): Promise<RawCase | null> {
-    let overview: RawOverview | null;
+  private async oneById(id: number, strict = false): Promise<OneResult> {
     try {
-      overview = await this.client.fetchOverview(String(id));
+      const overview = await this.client.fetchOverview(String(id));
+      if (!overview) return { raw: null, failed: false };
+      return { raw: await this.client.fetchCaseFromOverview(overview), failed: false };
     } catch (e) {
-      if (strict || !skippable(e)) throw e;
-      this.onWarn(`кейс ${id} получить не удалось — ${(e as Error).message}`);
-      return null;
+      if (strict || !(skippable(e) || caseUnavailable(e))) throw e;
+      this.onWarn(`кейс ${id}: получить не удалось — ${(e as Error).message}`);
+      return { raw: null, failed: caseUnavailable(e) };
     }
-    if (!overview) return null;
-    const projectId = overview.projectId ?? 0;
-    const stamp = overview.lastModifiedDate ?? 0;
-    const stored = this.refresh ? null : this.cache?.getCase(projectId, id, stamp);
-    if (stored) return stored;
-    const raw = await this.client.fetchCaseFromOverview(overview);
-    this.cache?.putCase(projectId, id, stamp, raw);
-    return raw;
   }
 
-  private async fetchWithCache(hits: SearchHit[], projectId: number): Promise<RawCase[]> {
-    if (!this.cache) {
-      const fetched = await this.client.fetchBatch(hits.map((h) => h.id));
-      this.warnMissingBodies(hits, fetched);
-      const byId = new Map(fetched.map((raw) => [Number(raw.overview.id), raw]));
-      return hits.map((h) => byId.get(h.id)).filter((c): c is RawCase => !!c);
-    }
-
-    const out = new Map<number, RawCase>();
-    const missing: SearchHit[] = [];
-    for (const h of hits) {
-      const stored = this.refresh ? null : this.cache.getCase(projectId, h.id, h.lastModifiedDate);
-      if (stored) out.set(h.id, stored);
-      else missing.push(h);
-    }
-    if (missing.length) {
-      const fetched = await this.client.fetchBatch(missing.map((h) => h.id));
-      const dateOf = new Map(missing.map((h) => [h.id, h.lastModifiedDate]));
-      for (const raw of fetched) {
-        const id = Number(raw.overview.id);
-        out.set(id, raw);
-        this.cache.putCase(projectId, id, dateOf.get(id) ?? 0, raw);
-      }
-    }
-
-    this.warnMissingBodies(hits, [...out.values()]);
-    return hits.map((h) => out.get(h.id)).filter((c): c is RawCase => !!c);
+  private async fetchBodies(hits: SearchHit[]): Promise<RawCase[]> {
+    const reported = new Set<number>();
+    const fetched = await this.client.fetchBatch(
+      hits.map((h) => h.id),
+      (id) => reported.add(Number(id)),
+    );
+    this.warnMissingBodies(hits, fetched, reported);
+    const byId = new Map(fetched.map((raw) => [Number(raw.overview.id), raw]));
+    return hits.map((h) => byId.get(h.id)).filter((c): c is RawCase => !!c);
   }
 
-  private warnMissingBodies(hits: SearchHit[], fetched: RawCase[]): void {
+  private warnMissingBodies(hits: SearchHit[], fetched: RawCase[], reported: Set<number>): void {
     const present = new Set(fetched.map((raw) => Number(raw.overview.id)));
-    const missing = hits.map((hit) => hit.id).filter((id) => !present.has(id));
+    const missing = hits.map((hit) => hit.id).filter((id) => !present.has(id) && !reported.has(id));
     if (missing.length) {
-      this.onWarn(
-        `не удалось получить тела кейсов: ${missing.join(', ')} — кейс не найден или к нему нет доступа`,
-      );
+      this.onWarn(`не удалось получить тела кейсов: ${missing.join(', ')}`);
     }
-  }
-
-  private async afterEmpty(source: Source, projectId: number, size: number): Promise<RawCase[]> {
-    const outcome = await inspectEmpty(this.client, source.rql, projectId);
-    if (!outcome) return [];
-    if (outcome.kind === 'error') throw new QueryError(outcome.message);
-    this.onWarn(outcome.note);
-    const { hits } = await this.client.searchAll(outcome.rql, projectId, size);
-    return hits.length ? this.fetchWithCache(hits, projectId) : [];
   }
 }

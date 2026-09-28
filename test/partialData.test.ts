@@ -8,6 +8,11 @@ import { TestOpsClient } from '../src/testops/client.js';
 import { explainRejectedQuery } from '../src/testops/diagnosis.js';
 import type { PortResponse, TestOpsPort } from '../src/testops/port.js';
 
+async function caseDetails(client: TestOpsClient, id: string) {
+  const overview = await client.fetchOverview(id);
+  return overview ? client.fetchCaseFromOverview(overview) : null;
+}
+
 const jwtWithExp = (secondsFromNow: number): string =>
   `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + secondsFromNow })).toString('base64url')}.s`;
 
@@ -21,14 +26,10 @@ const resp = (status: number, body: unknown): PortResponse => ({
 const cfg: AppConfig = {
   baseUrl: 'https://x.test',
   token: 'секрет',
-  defaultProjectId: 14,
+  defaultProjectId: 1,
   projects: {},
   people: {},
   trees: {},
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
 } as unknown as AppConfig;
 
 class RecordingPort implements TestOpsPort {
@@ -53,35 +54,31 @@ class RecordingPort implements TestOpsPort {
 const cfgR9: AppConfig = {
   baseUrl: 'https://ts.example',
   token: 'tok',
-  defaultProjectId: 14,
-  projects: { '14': 'WEB' },
-  timeoutMs: 30000,
-  maxCases: 100,
-  pageSize: 20,
-  sort: 'id,DESC',
+  defaultProjectId: 1,
+  projects: { '1': 'WEB' },
 } as unknown as AppConfig;
 
 describe('шаги ручного кейса ответили ошибкой сервера', () => {
   it('вызов завершается ошибкой, а не кейсом без шагов', async () => {
     const port = new RecordingPort((url) => {
       if (url.includes('/overview'))
-        return resp(200, { id: 1, projectId: 14, hasManualScenario: true });
+        return resp(200, { id: 1, projectId: 1, hasManualScenario: true });
       if (url.includes('/step')) return resp(502, {});
       return resp(200, { content: [] });
     });
     await expect(
-      new TestOpsClient({ ...cfg, retries: 0 }, port).fetchCaseDetails('1'),
+      caseDetails(new TestOpsClient(cfg, port), '1'),
     ).rejects.toBeInstanceOf(ApiError);
   });
 
   it('404 на шагах ошибкой не считается', async () => {
     const port = new RecordingPort((url) => {
       if (url.includes('/overview'))
-        return resp(200, { id: 1, projectId: 14, hasManualScenario: true });
+        return resp(200, { id: 1, projectId: 1, hasManualScenario: true });
       if (url.includes('/step')) return resp(404, {});
       return resp(200, { content: [] });
     });
-    const raw = await new TestOpsClient(cfg, port).fetchCaseDetails('1');
+    const raw = await caseDetails(new TestOpsClient(cfg, port), '1');
     expect(raw?.steps).toBeNull();
   });
 });
@@ -90,7 +87,7 @@ describe('шаги ручного кейса не пришли', () => {
   it('состояние сценария не объявляется актуальным', () => {
     const tc = normalizeCase(
       {
-        overview: { id: 1, projectId: 14, hasManualScenario: true },
+        overview: { id: 1, projectId: 1, hasManualScenario: true },
         steps: null,
         comments: [],
       } as unknown as RawCase,
@@ -99,6 +96,7 @@ describe('шаги ручного кейса не пришли', () => {
     expect(tc.scenarioSource).toBe('empty');
     expect(tc.scenarioLines).toEqual([
       defaultProfile.warnings.emptyScenario,
+      '',
       defaultProfile.warnings.stepsFetchError,
     ]);
     expect(tc.scenarioLines.join(' ')).toContain('Нет шагов');
@@ -116,13 +114,14 @@ describe('связи кейса не получены', () => {
       get: async (url: string) =>
         resp(
           url.includes('/relation') ? 502 : 200,
-          url.includes('/overview') ? { id: 1, projectId: 14 } : { content: [] },
+          url.includes('/overview') ? { id: 1, projectId: 1 } : { content: [] },
         ),
     };
     const warnings: string[] = [];
-    const raw = await new TestOpsClient({ ...cfgR9, retries: 0 }, port as never, undefined, (m) =>
-      warnings.push(m),
-    ).fetchCaseDetails('1');
+    const raw = await caseDetails(
+      new TestOpsClient(cfgR9, port as never, (m) => warnings.push(m)),
+      '1',
+    );
     expect(raw?.relations).toBeNull();
     expect(warnings.join(' ')).toContain('связи');
   });
@@ -136,8 +135,8 @@ describe('справочник полей не удалось получить',
           throw new Error('HTTP 502');
         },
       },
-      'Section1 = "Раздел А"',
-      14,
+      'Поле1 = "Раздел А"',
+      1,
     );
     expect(text).toContain('получить не удалось');
     expect(text).toContain('HTTP 502');

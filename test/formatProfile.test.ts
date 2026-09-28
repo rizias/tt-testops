@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { TestCase } from '../src/model.js';
 import { defaultProfile, loadProfile } from '../src/profile.js';
 import { renderCase } from '../src/render.js';
+import { stepsOf } from './scenarioFixtures.js';
 
 describe('профиль оформления проверяется', () => {
   let dir: string;
@@ -37,14 +38,18 @@ describe('порядок разделов задаётся профилем', ()
     automated: false,
     layer: 'Web',
     tags: [],
-    links: [],
+    attachments: [],
     linkRefs: [],
+    issues: [],
+    people: [],
+    relatedCases: [],
+    comments: [],
     attributes: [],
     isLegacy: false,
-    declaredManual: false,
     description: 'Опис',
     precondition: 'Предус',
     expectedResult: 'Итог',
+    scenario: stepsOf('Шаг'),
     scenarioLines: ['1. Шаг'],
   } as unknown as TestCase;
 
@@ -74,13 +79,7 @@ describe('профиль с неверным типом поля', () => {
 
   it('отвергается с именем поля', () => {
     const path = join(dir, 'p.json');
-    writeFileSync(path, JSON.stringify({ contractVersion: '2.0', removeLinks: 'да' }), 'utf8');
-    expect(() => loadProfile(path)).toThrow(/removeLinks/);
-  });
-
-  it('переставленный порядок под историческим контрактом отвергается', () => {
-    const path = join(dir, 'order.json');
-    writeFileSync(path, JSON.stringify({ sectionOrder: ['scenario', 'description'] }), 'utf8');
-    expect(() => loadProfile(path)).toThrow(/sectionOrder/);
+    writeFileSync(path, JSON.stringify({ steps: { indent: 4 } }), 'utf8');
+    expect(() => loadProfile(path)).toThrow(/steps.indent/);
   });
 });

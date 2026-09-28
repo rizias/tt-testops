@@ -1,13 +1,29 @@
 import { QueryError } from './errors.js';
 
-interface LinkCondition {
+export interface LinkCondition {
   id?: unknown;
   value?: unknown;
   type?: unknown;
 }
 
+export interface ConditionQuery {
+  rql: string;
+
+  conditions?: LinkCondition[];
+
+  text?: string;
+}
+
 export interface ParsedFilterLink {
   rql: string;
+
+  conditions: LinkCondition[];
+
+  filterId: number | null;
+
+  sortBy: string | null;
+
+  sortDirection: string | null;
 
   projectId: number | null;
 
@@ -17,9 +33,23 @@ export interface ParsedFilterLink {
 }
 
 const AQL_CONDITION_ID = 'aql';
+const CONTENT_CONDITION_ID = 'content';
+const KNOWN_PARAMS = new Set(['search', 'treeId', 'filterId', 'sortBy', 'sortDirection']);
 
 export function isFilterLink(value: string): boolean {
   return /^https?:\/\//i.test(value.trim());
+}
+
+export function conditionList(query: ConditionQuery): LinkCondition[] {
+  const list: LinkCondition[] = [];
+  if (query.rql) list.push({ id: AQL_CONDITION_ID, value: query.rql, type: 'string' });
+  list.push(...(query.conditions ?? []));
+  if (query.text) list.push({ id: CONTENT_CONDITION_ID, value: query.text, type: 'string' });
+  return list;
+}
+
+export function encodeConditions(list: LinkCondition[]): string {
+  return Buffer.from(JSON.stringify(list), 'utf8').toString('base64');
 }
 
 function decodeSearch(raw: string): LinkCondition[] {
@@ -46,7 +76,57 @@ function projectIdFrom(pathname: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-export function parseFilterLink(link: string): ParsedFilterLink {
+function hasValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+function noQuery(url: URL, reason: string): QueryError {
+  const found = [...url.searchParams.keys()];
+  return new QueryError(
+    `В ссылке нет запроса: ${reason}. ${
+      found.length ? `В ней есть: ${found.join(', ')}.` : 'Других параметров тоже нет.'
+    } Скопируйте адрес после того, как применили фильтр в TestOps.`,
+  );
+}
+
+function filterIdOf(raw: string | null): number | null {
+  if (raw === null) return null;
+  if (!/^\d+$/.test(raw)) {
+    throw new QueryError(`Параметр ссылки filterId должен быть числом, а в ссылке «${raw}».`);
+  }
+  return Number(raw);
+}
+
+function splitAql(conditions: LinkCondition[]): { rql: string; others: LinkCondition[] } {
+  const index = conditions.findIndex(
+    (c) => c.id === AQL_CONDITION_ID && typeof c.value === 'string',
+  );
+  if (index < 0) return { rql: '', others: conditions };
+  return {
+    rql: String(conditions[index]?.value),
+    others: conditions.filter((_, i) => i !== index),
+  };
+}
+
+function linkWarnings(url: URL): string[] {
+  const warnings: string[] = [];
+  const treeId = url.searchParams.get('treeId');
+  if (treeId) {
+    warnings.push(
+      `Фильтр по дереву кейсов (treeId=${treeId}) не перенесён: дерево задаёт только путь кейсов.`,
+    );
+  }
+  const spare = [...url.searchParams.keys()].filter((k) => !KNOWN_PARAMS.has(k));
+  if (spare.length) {
+    warnings.push(`Параметры ссылки не перенесены: ${spare.join(', ')} — сервер их не получит.`);
+  }
+  return warnings;
+}
+
+function urlOf(link: string): URL {
   let url: URL;
   try {
     url = new URL(link.trim());
@@ -56,57 +136,45 @@ export function parseFilterLink(link: string): ParsedFilterLink {
   if (!/^https?:$/i.test(url.protocol)) {
     throw new QueryError(`Это не ссылка на фильтр TestOps: ${link}`);
   }
+  return url;
+}
 
+export function parseFilterLink(link: string): ParsedFilterLink {
+  const url = urlOf(link);
   const raw = url.searchParams.get('search');
-  if (!raw) {
-    const found = [...url.searchParams.keys()];
-    throw new QueryError(
-      `В ссылке нет запроса: параметра search нет. ${
-        found.length ? `В ней есть: ${found.join(', ')}.` : 'Других параметров тоже нет.'
-      } Скопируйте адрес после того, как применили фильтр в TestOps.`,
-    );
+  const filterId = filterIdOf(url.searchParams.get('filterId'));
+  if (!raw && filterId === null) throw noQuery(url, 'нет ни search, ни filterId');
+
+  const decoded = raw ? decodeSearch(raw) : [];
+  if (filterId === null && !decoded.some((c) => hasValue(c.value))) {
+    throw noQuery(url, 'в search нет ни одного условия со значением, filterId тоже нет');
   }
-
-  const conditions = decodeSearch(raw);
-  const aql = conditions.find((c) => c.id === AQL_CONDITION_ID);
-  const otherIds = conditions
-    .filter((c) => c.id !== AQL_CONDITION_ID)
-    .map((c) => String(c.id ?? '?'));
-
-  if (!aql || typeof aql.value !== 'string') {
-    const params = [...url.searchParams.keys()].filter((k) => k !== 'search');
-    const found = [...otherIds, ...params];
-    throw new QueryError(
-      `В ссылке нет запроса (условия aql). Найдено в ссылке: ${found.length ? found.join(', ') : 'ничего'}.`,
-    );
-  }
-
-  const warnings: string[] = [];
+  const { rql, others } = splitAql(decoded);
   const treeId = url.searchParams.get('treeId');
-  if (treeId) {
-    warnings.push(
-      `Фильтр по дереву кейсов (treeId=${treeId}) не перенесён: AQL такого условия не выражает.`,
-    );
-  }
-  if (otherIds.length) {
-    warnings.push(`Условия из ссылки не перенесены: ${otherIds.join(', ')}.`);
-  }
-  const spare = [...url.searchParams.keys()].filter((k) => k !== 'search' && k !== 'treeId');
-  if (spare.length) {
-    warnings.push(`Параметры ссылки не перенесены: ${spare.join(', ')} — AQL их не выражает.`);
-  }
 
   return {
-    rql: aql.value,
+    rql,
+    conditions: others,
+    filterId,
+    sortBy: url.searchParams.get('sortBy'),
+    sortDirection: url.searchParams.get('sortDirection'),
     projectId: projectIdFrom(url.pathname),
     treeId: treeId ? Number(treeId) : null,
-    warnings,
+    warnings: linkWarnings(url),
   };
 }
 
-export function buildFilterLink(baseUrl: string, projectId: number, rql: string): string {
+export function buildFilterLink(
+  baseUrl: string,
+  projectId: number,
+  query: ConditionQuery & { filterId?: number; sortBy?: string; sortDirection?: string },
+): string {
   const base = baseUrl.replace(/\/+$/, '');
-  const conditions: LinkCondition[] = [{ id: AQL_CONDITION_ID, value: rql, type: 'string' }];
-  const search = Buffer.from(JSON.stringify(conditions), 'utf8').toString('base64');
-  return `${base}/project/${projectId}/test-cases?search=${encodeURIComponent(search)}`;
+  const list = conditionList(query);
+  const params = new URLSearchParams();
+  if (list.length) params.set('search', encodeConditions(list));
+  if (query.filterId !== undefined) params.set('filterId', String(query.filterId));
+  if (query.sortBy) params.set('sortBy', query.sortBy);
+  if (query.sortDirection) params.set('sortDirection', query.sortDirection);
+  return `${base}/project/${projectId}/test-cases?${params.toString()}`;
 }

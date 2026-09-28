@@ -25,6 +25,13 @@ ul{margin:.4em 0; padding-left:1.3em}
 .comments li{border-left:2px solid var(--rule); padding:2px 0 2px 12px; margin:10px 0}
 .comments .who{font-size:12px; color:var(--muted); margin-bottom:2px}
 .summary{color:var(--muted); font-size:13.5px; margin:0 0 16px}
+.filterBlock{margin:0 0 20px}
+.filterRow{display:grid; grid-template-columns:160px minmax(0,1fr) auto; gap:4px 14px; align-items:baseline; padding:6px 0; font-size:13px; line-height:1.6}
+.filterRow+.filterRow{border-top:1px solid var(--rule)}
+.filterProject{color:var(--muted); overflow-wrap:anywhere}
+.filterPart{display:inline-block; margin:0 6px 4px 0; padding:0 6px; border-radius:4px; background:var(--chip); color:var(--chip-ink); overflow-wrap:anywhere}
+.filterOpen{white-space:nowrap; text-decoration:none}
+.filterMiss{color:var(--muted)}
 .toc{
   position:fixed; z-index:200; top:calc(var(--toolbar-h) + 8px); bottom:16px; left:16px;
   width:min(380px, calc(100vw - 32px)); overflow:auto; padding:12px;
@@ -35,7 +42,7 @@ ul{margin:.4em 0; padding-left:1.3em}
 body.split{max-width:none; padding:0}
 body.split .toolbar{margin:0; padding:0 16px}
 body.split .ctl_toc{display:none}
-body.split .summary{display:none}
+body.split .summary,body.split .filterBlock{display:none}
 body.split #tree{
   position:fixed; top:var(--toolbar-h); left:0; bottom:0; width:var(--split-w);
   overflow:auto; overscroll-behavior:contain; padding:0 12px 32px;
@@ -61,11 +68,13 @@ body.split details.case>.caseInner{display:none}
 body.split details.group>summary{top:calc(var(--sticky-top) - var(--toolbar-h))}
 body.split #tree>details.group:first-of-type{margin-top:0}
 .treeFilter{
-  position:sticky; top:0; z-index:80; width:100%; height:30px; margin:0 0 6px;
+  position:sticky; top:var(--toolbar-h); z-index:80; width:100%; height:30px; margin:0 0 6px;
   padding:0 10px; font:inherit; font-size:13px; color:var(--ink);
   background:var(--surface); border:1px solid var(--rule); border-radius:7px;
+  box-shadow:0 6px 0 var(--bg);
 }
-#tree:not(:hover) .treeFilter:placeholder-shown{opacity:.75}
+#tree:not(:hover) .treeFilter:placeholder-shown::placeholder{opacity:.75}
+body.split .treeFilter{top:0}
 body.split details.case{content-visibility:visible; contain-intrinsic-size:auto}
 body.split details.case.case_current{
   border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);
@@ -78,7 +87,7 @@ body.split details.case>summary{
 }
 body.split details.case>summary .type{margin-right:5px; vertical-align:-2px}
 body.split details.case>summary .id{margin-right:6px}
-body.split details.case>summary .caseName{white-space:normal; overflow-wrap:anywhere}
+body.split details.case>summary .caseName{white-space:pre-wrap; overflow-wrap:anywhere}
 body.split details.case>summary .tag{float:right; margin:0 0 4px 8px}
 body.split details.case>summary .ctl_copy{float:right; margin:0 0 4px 6px}
 body.split details.group>summary{position:sticky}
@@ -130,7 +139,7 @@ body.split details.group>summary:focus-within .sectionCtl{opacity:1; pointer-eve
   color:var(--ink); background:var(--surface); border:1px solid var(--rule); border-radius:50%;
   box-shadow:0 4px 18px rgba(0,0,0,.18); cursor:pointer; font-size:19px;
 }
-@media (max-width:620px){.toTop{right:12px; bottom:12px} .toolbarScope{display:none}}
+@media (max-width:620px){.toTop{right:12px; bottom:12px} .toolbarScope{display:none} .filterRow{grid-template-columns:1fr}}
 .blockBody img{cursor:zoom-in}
 .viewer{
   display:none; position:fixed; inset:0; z-index:1000; background:rgba(10,12,16,.88);

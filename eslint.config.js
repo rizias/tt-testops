@@ -36,7 +36,7 @@ export const ownerPaths = [];
 
 export function buildConfig(ownerPaths) {
   return tseslint.config(
-    { ignores: ['dist/**', 'coverage/**'] },
+    { ignores: ['dist/**', 'coverage/**', '.claude/**'] },
     ...tseslint.configs.recommended,
     {
       linterOptions: { noInlineConfig: true },
@@ -50,12 +50,17 @@ export function buildConfig(ownerPaths) {
       rules: {
         'local/no-comments': 'error',
         complexity: ['error', 15],
+        'max-lines': 'error',
         '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       },
     },
     {
       files: ['**/*.js', '**/*.mjs', '**/*.cjs', '**/*.jsx'],
       languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+    },
+    {
+      files: ['test/**', 'tests/**', '__tests__/**'],
+      rules: { 'max-lines': ['error', 500] },
     },
     ...(ownerPaths.length > 0 ? [{
       files: ownerPaths,

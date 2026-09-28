@@ -19,7 +19,6 @@ import {
   type InstallOptions,
   type InstallReport,
   isSafeRelative,
-  kindOfBase,
   note,
   type RefreshOptions,
   type RefreshReport,
@@ -39,10 +38,10 @@ const installJob = async (
   registry: Registry,
   report: InstallReport,
 ): Promise<void> => {
-  const template = resolveTemplate(options.templates, job.kind, job.skill);
+  const template = resolveTemplate(options.templates, job.skill);
   if (template === undefined) {
     report.skipped.push({ path: job.dest, reason: 'failed' });
-    note(false, `${options.pkgName}: no template for ${job.skill} — skipped ${job.dest}`);
+    note(`${options.pkgName}: no template for ${job.skill} — skipped ${job.dest}`);
     return;
   }
   try {
@@ -75,7 +74,7 @@ const installJob = async (
     report.installed.push(job.dest);
   } catch {
     report.skipped.push({ path: job.dest, reason: 'failed' });
-    note(false, `${options.pkgName}: could not install ${job.dest}`);
+    note(`${options.pkgName}: could not install ${job.dest}`);
   }
 };
 
@@ -84,7 +83,7 @@ export const installSkills = async (options: InstallOptions): Promise<InstallRep
     pkgName: options.pkgName,
     stateDir: options.stateDir,
   });
-  const projectDir = path.resolve(options.projectDir ?? process.cwd());
+  const projectDir = path.resolve(options.projectDir);
   const skills = scanSkills(options.templates);
   const report: InstallReport = { skills, installed: [], skipped: [], pruned };
   if (skills.length === 0) return report;
@@ -107,10 +106,7 @@ export const installSkills = async (options: InstallOptions): Promise<InstallRep
       reason: 'failed',
       message: `${options.pkgName}: skill ${job.skill} was skipped — its destination collides with another skill on this filesystem. Report this to the user.`,
     });
-    note(
-      false,
-      `${options.pkgName}: duplicate destination for skill ${job.skill} — skipped ${job.dest}`,
-    );
+    note(`${options.pkgName}: duplicate destination for skill ${job.skill} — skipped ${job.dest}`);
   }
   const registry = readRegistry(options.stateDir);
   for (const job of jobs) {
@@ -128,17 +124,14 @@ const refreshOne = (
   outcome: 'foreign-files' | 'unavailable' | 'failed' | 'refreshed' | 'current';
   clash?: string[];
 } => {
-  const template = resolveTemplate(options.templates, kindOfBase(path.dirname(copy.path)), skill);
+  const template = resolveTemplate(options.templates, skill);
   if (template === undefined) return { outcome: 'failed' };
   if (!fs.existsSync(path.dirname(copy.path))) return { outcome: 'unavailable' };
   if (stampOf(copy.path, skill) === stampOf(template, skill)) return { outcome: 'current' };
   const recorded = copy.files.filter(isSafeRelative);
   const clash = collisions(copy.path, template, recorded);
   if (clash.length > 0) {
-    note(
-      options.quiet,
-      `${options.pkgName}: ${copy.path} update would overwrite files this package did not place (${clash.join(', ')}) — skipped`,
-    );
+    note(`${options.pkgName}: ${copy.path} update would overwrite files this package did not place (${clash.join(', ')}) — skipped`);
     return { outcome: 'foreign-files', clash };
   }
   try {
@@ -159,10 +152,9 @@ const announceUnavailable = (
   dest: string,
   seen: Record<string, number>,
 ): boolean => {
-  if (options.quiet === true) return false;
   const key = findPathKey(seen, dest);
   if (Date.now() - (key === undefined ? 0 : (seen[key] ?? 0)) <= DAY_MS) return false;
-  note(false, `${options.pkgName}: path unavailable, skipped: ${dest}`);
+  note(`${options.pkgName}: path unavailable, skipped: ${dest}`);
   seen[key ?? dest] = Date.now();
   return true;
 };
@@ -190,7 +182,7 @@ const refreshEntry = (
       }
       report.skipped.push(skipped);
       if (outcome === 'failed')
-        note(options.quiet, `${options.pkgName}: could not refresh ${copy.path}`);
+        note(`${options.pkgName}: could not refresh ${copy.path}`);
       if (outcome === 'unavailable')
         announced = announceUnavailable(options, copy.path, seen) || announced;
     }
@@ -214,10 +206,7 @@ export const maybeRefreshSkills = (options: RefreshOptions): RefreshReport => {
     }
     if (versionChanged && report.refreshed.length === 0) writeRegistry(options.stateDir, registry);
     if (report.refreshed.length > 0) {
-      note(
-        options.quiet,
-        `${options.pkgName}: refreshed ${report.refreshed.length} skill(s) (${options.version})`,
-      );
+      note(`${options.pkgName}: refreshed ${report.refreshed.length} skill(s) (${options.version})`);
     }
   } catch {
     return report;

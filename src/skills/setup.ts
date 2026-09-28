@@ -7,17 +7,11 @@ import { ConfigError } from '../errors.js';
 import { homeDirFrom, stateDir } from '../settingsPaths.js';
 import { withLock } from '../stateLock.js';
 import { installSkills, maybeRefreshSkills } from './updater.js';
-import type { Ask, ChosenTarget, InstallReport, TargetOption } from './updaterState.js';
+import { type Ask, type ChosenTarget, type InstallReport, samePath, type TargetOption } from './updaterState.js';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 type InitTool = 'claude' | 'agents';
 const GLOBAL_SKILL_DIRS = ['.claude', '.agents', '.codex'];
-
-function samePath(left: string, right: string): boolean {
-  const a = path.resolve(left);
-  const b = path.resolve(right);
-  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-}
 
 function refuseGlobalRoot(root: string): void {
   const home = homeDirFrom(process.env);
@@ -114,7 +108,6 @@ export function createAsk(terminal: Terminal, projectDir: string, tools?: InitTo
           root: path.join(path.resolve(projectDir), `.${tool}`, 'skills'),
         }));
       }
-      const visible = options.filter((option) => option.id !== 'global');
       writeTargets(options, projectDir, skills);
       const picked = await terminal.question('Куда ставить (1 или 2, пусто — отмена): ');
       const chosen: ChosenTarget[] = [];
@@ -122,7 +115,7 @@ export function createAsk(terminal: Terminal, projectDir: string, tools?: InitTo
         .split(',')
         .map((value) => value.trim())
         .filter(Boolean)) {
-        const option = visible[Number(part) - 1];
+        const option = options[Number(part) - 1];
         if (option === undefined) continue;
         if (option.id === 'custom') {
           const root = (await terminal.question('Путь: ')).trim();
@@ -148,11 +141,6 @@ export function createAsk(terminal: Terminal, projectDir: string, tools?: InitTo
 
 export async function runInit(projectDir: string, tools?: InitTool[]): Promise<InstallReport> {
   refuseHomeProject(projectDir);
-  if (tools === undefined && !process.stdin.isTTY) {
-    throw new ConfigError(
-      'Некого спросить: ввод не терминал. Назови каталоги явно, например --for claude,agents. Ничего не создано.',
-    );
-  }
   await keepInstalledSkillsFresh();
   const meta = packageMeta();
   const terminal = createTerminal();

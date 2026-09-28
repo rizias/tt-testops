@@ -1,43 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import { renderBatchResolved } from '../src/contentResolver.js';
+import { resolveToTestCase } from '../src/contentResolver.js';
 import type { RawCase, TestCase } from '../src/model.js';
 import { defaultProfile } from '../src/profile.js';
-import { renderCase } from '../src/render.js';
+import { renderBatch, renderCase } from '../src/render.js';
+import { step, stepsOf } from './scenarioFixtures.js';
 
 const tc = {
   id: '10001',
   name: 'Отображение баннера',
-  projectId: 14,
+  projectId: 1,
   path: ['Раздел А', 'Раздел Б'],
   status: 'Active',
   automated: false,
   layer: 'Web',
   tags: ['Смоук'],
-  links: ['https://tracker.example/A-1'],
+  attachments: [],
   linkRefs: [{ name: 'Задача', url: 'https://tracker.example/A-1' }],
   issues: [],
   people: [],
   relatedCases: [],
   attributes: [{ name: 'Важность', value: 'P1' }],
   isLegacy: false,
-  declaredManual: false,
   description: 'Описание кейса.',
   precondition: 'Предусловие кейса.',
   expectedResult: 'Баннер показан.',
   scenarioSource: 'newSteps',
-  scenarioLines: ['1. Открыть страницу', '  1. Проскроллить вниз', '2. Закрыть баннер'],
+  scenario: stepsOf(step('Открыть страницу', { children: [step('Проскроллить вниз')] }), 'Закрыть баннер'),
+  scenarioLines: ['1. Открыть страницу', '', '    1. Проскроллить вниз', '2. Закрыть баннер'],
   comments: [],
 } as unknown as TestCase;
 
 const GOLDEN = [
   '# **Отображение баннера** (ID: 10001)',
+  '- **Проект:** `1`',
   '- **Путь:** `Раздел А` → `Раздел Б`',
   '- **Статус:** `Active`',
+  '- **Слой:** `Web`',
   '- **Тип:** `Ручной`',
-  '- **Layer:** `Web`',
-  '- **Важность:** `P1`',
-  '- **Теги:** `Смоук`',
   '- **Ссылки:** [Задача](https://tracker.example/A-1)',
+  '- **Теги:** `Смоук`',
+  '- **Важность:** `P1`',
   '',
   '### Описание',
   'Описание кейса.',
@@ -47,43 +49,57 @@ const GOLDEN = [
   '',
   '### Сценарий',
   '1. Открыть страницу',
-  '  1. Проскроллить вниз',
+  '',
+  '    1. Проскроллить вниз',
   '2. Закрыть баннер',
   '',
   '### Ожидаемый результат',
   'Баннер показан.',
 ].join('\n');
 
-describe('эталонный снимок Markdown', () => {
-  it('вывод совпадает с замороженным образцом байт в байт', () => {
+const GOLDEN_WITH_ADDRESS = [
+  '# **Отображение баннера** (ID: 10001)',
+  '- **Адрес в TestOps:** <https://ts.example/project/1/test-cases/10001>',
+  ...GOLDEN.split('\n').slice(1),
+].join('\n');
+
+describe('снимок вывода Markdown', () => {
+  it('вывод совпадает с замороженным образцом байт в байт — без адреса сервера (renderCase без baseUrl)', () => {
     expect(renderCase(tc, defaultProfile)).toBe(GOLDEN);
   });
 
-  it('вложенность шага — два пробела на уровень', () => {
-    const scenario = renderCase(tc, defaultProfile).split('### Сценарий\n')[1] ?? '';
-    const nested = scenario.split('\n')[1] ?? '';
-    expect(nested).toBe('  1. Проскроллить вниз');
+  it('реальный вывод CLI с адресом сервера: строка адреса — первая под шапкой, автоссылка', () => {
+    expect(renderCase(tc, defaultProfile, [], 'https://ts.example')).toBe(GOLDEN_WITH_ADDRESS);
   });
 
-  it('служебных строк о версии контракта в потоке нет', () => {
-    const out = renderCase(tc, defaultProfile);
-    expect(out).not.toContain('contractVersion');
-    expect(out).not.toContain(defaultProfile.contractVersion);
+  it('строка адреса остаётся первой и перед баннером старого формата', () => {
+    const legacy = { ...tc, isLegacy: true, scenarioSource: 'inlineSteps' } as unknown as TestCase;
+    const out = renderCase(legacy, defaultProfile, [], 'https://ts.example').split('\n');
+    expect(out[0]).toBe('# **Отображение баннера** (ID: 10001)');
+    expect(out[1]).toBe('- **Адрес в TestOps:** <https://ts.example/project/1/test-cases/10001>');
+    expect(out.findIndex((l) => l.includes('Старый формат'))).toBeGreaterThan(1);
   });
+
+  it('вложенность шага — 4 пробела на уровень', () => {
+    const scenario = renderCase(tc, defaultProfile).split('### Сценарий\n')[1] ?? '';
+    const nested = scenario.split('\n')[2] ?? '';
+    expect(nested).toBe('    1. Проскроллить вниз');
+  });
+
 });
 
 const rawOf = (id: number, name: string): RawCase =>
   ({
     overview: {
       id,
-      projectId: 14,
+      projectId: 1,
       name,
       status: { name: 'Active' },
       automated: false,
       hasManualScenario: true,
       customFields: [],
       tags: [],
-      links: [],
+      attachments: [],
       members: [],
     },
     steps: {
@@ -98,13 +114,13 @@ const rawOf = (id: number, name: string): RawCase =>
 
 const deps = { fetchAttachment: async () => '', baseUrl: 'https://ts.example' };
 
-describe('эталонный снимок пачки', () => {
+describe('снимок вывода пачки', () => {
   it('вывод двух кейсов совпадает с замороженным образцом байт в байт', async () => {
-    const out = await renderBatchResolved(
-      [rawOf(10001, 'Первый кейс'), rawOf(10002, 'Второй кейс')],
-      defaultProfile,
-      deps,
+    const cases = [rawOf(10001, 'Первый кейс'), rawOf(10002, 'Второй кейс')];
+    const resolved = await Promise.all(
+      cases.map((raw) => resolveToTestCase(raw, defaultProfile, deps)),
     );
+    const out = renderBatch(cases, defaultProfile, deps.baseUrl, resolved, () => null, {});
     expect(out).toBe(
       [
         '### 📊 Сводка по запросу',
@@ -113,17 +129,19 @@ describe('эталонный снимок пачки', () => {
         '==============================',
         '',
         '# **Первый кейс** (ID: 10001)',
+        '- **Адрес в TestOps:** <https://ts.example/project/1/test-cases/10001>',
+        '- **Проект:** `1`',
         '- **Статус:** `Active`',
         '- **Тип:** `Ручной`',
-        '- **Layer:** `Не указан`',
         '',
         '### Сценарий',
         '1. Открыть страницу',
         '',
         '# **Второй кейс** (ID: 10002)',
+        '- **Адрес в TestOps:** <https://ts.example/project/1/test-cases/10002>',
+        '- **Проект:** `1`',
         '- **Статус:** `Active`',
         '- **Тип:** `Ручной`',
-        '- **Layer:** `Не указан`',
         '',
         '### Сценарий',
         '1. Открыть страницу',

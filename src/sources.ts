@@ -1,11 +1,34 @@
 import { ConfigError } from './errors.js';
+import type { LinkCondition } from './links.js';
+import { idsOnly } from './queryCheck.js';
 
 export interface Source {
   project?: string;
   rql: string;
+  conditions?: LinkCondition[];
+  filterId?: number;
+  text?: string;
+  sortBy?: string;
+  sortDirection?: string;
 }
 
-export interface QueryToken {
+export function directIds(source: Source): number[] | null {
+  if (source.text || source.conditions?.length || source.filterId !== undefined) return null;
+  return idsOnly(source.rql);
+}
+
+export type SourceExtra = Pick<Source, 'conditions' | 'filterId' | 'sortBy' | 'sortDirection'>;
+
+export function extrasOf(q: SourceExtra | undefined): SourceExtra {
+  return {
+    conditions: q?.conditions,
+    filterId: q?.filterId,
+    sortBy: q?.sortBy,
+    sortDirection: q?.sortDirection,
+  };
+}
+
+export interface QueryToken extends SourceExtra {
   text: string;
 
   afterProject: number;
@@ -19,9 +42,10 @@ export function buildSources(projects: string[], queries: QueryToken[]): Source[
   }
 
   if (queries.length <= 1) {
-    const rql = queries[0]?.text ?? '';
-    if (!projects.length) return [{ project: undefined, rql }];
-    return projects.map((project) => ({ project, rql }));
+    const q = queries[0];
+    const rql = q?.text ?? '';
+    if (!projects.length) return [{ project: undefined, rql, ...extrasOf(q) }];
+    return projects.map((project) => ({ project, rql, ...extrasOf(q) }));
   }
 
   if (queries.length !== projects.length) {
@@ -39,7 +63,11 @@ export function buildSources(projects: string[], queries: QueryToken[]): Source[
       );
     }
     used.add(q.afterProject);
-    sources.push({ project: projects[q.afterProject], rql: q.text });
+    sources.push({
+      project: projects[q.afterProject],
+      rql: q.text,
+      ...extrasOf(q),
+    });
   }
 
   const orphan = projects.findIndex((_, i) => !used.has(i));

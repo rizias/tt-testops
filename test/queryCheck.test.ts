@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { extractCfConditions, findSimilar, idsOnly, replaceValue } from '../src/queryCheck.js';
+import { extractCfConditions, findSimilar, idsOnly } from '../src/queryCheck.js';
 
 describe('extractCfConditions', () => {
   it('finds a single equality condition', () => {
-    expect(extractCfConditions('cf["Section1"] = "Раздел А"')).toEqual([
-      { field: 'Section1', value: 'Раздел А' },
+    expect(extractCfConditions('cf["Поле1"] = "Раздел А"')).toEqual([
+      { field: 'Поле1', value: 'Раздел А' },
     ]);
   });
 
   it('finds several conditions joined by and/or', () => {
-    const rql = 'cf["Section1"] = "Раздел А" and automation = false or cf["Epic"] = "SSO"';
+    const rql = 'cf["Поле1"] = "Раздел А" and automation = false or cf["Поле0"] = "SSO"';
     expect(extractCfConditions(rql)).toEqual([
-      { field: 'Section1', value: 'Раздел А' },
-      { field: 'Epic', value: 'SSO' },
+      { field: 'Поле1', value: 'Раздел А' },
+      { field: 'Поле0', value: 'SSO' },
     ]);
   });
 
   it('tolerates spacing around the operator', () => {
-    expect(extractCfConditions('cf["Epic"]="SSO"')).toEqual([{ field: 'Epic', value: 'SSO' }]);
+    expect(extractCfConditions('cf["Поле0"]="SSO"')).toEqual([{ field: 'Поле0', value: 'SSO' }]);
   });
 
   it('returns nothing when the query has no custom-field equality', () => {
@@ -25,40 +25,40 @@ describe('extractCfConditions', () => {
   });
 
   it('in [...] проверяется по каждому значению', () => {
-    expect(extractCfConditions('cf["Section1"] in ["A", "B"]')).toEqual([
-      { field: 'Section1', value: 'A' },
-      { field: 'Section1', value: 'B' },
+    expect(extractCfConditions('cf["Поле1"] in ["A", "B"]')).toEqual([
+      { field: 'Поле1', value: 'A' },
+      { field: 'Поле1', value: 'B' },
     ]);
   });
 
   it('у прочих условий проверяется только имя поля', () => {
-    expect(extractCfConditions('cf["Section1"] != "Раздел А"')).toEqual([
-      { field: 'Section1', value: '' },
+    expect(extractCfConditions('cf["Поле1"] != "Раздел А"')).toEqual([
+      { field: 'Поле1', value: '' },
     ]);
-    expect(extractCfConditions('not cf["Section1"] = "Раздел А"')).toEqual([
-      { field: 'Section1', value: '' },
+    expect(extractCfConditions('not cf["Поле1"] = "Раздел А"')).toEqual([
+      { field: 'Поле1', value: '' },
     ]);
   });
 });
 
 describe('findSimilar', () => {
-  const sections = ['Section1', 'Кaталог  (Catalog)', 'Отчёты', 'Ипотека'];
+  const sections = ['Поле1', 'Знaчение  Б (B)', 'Значение А', 'Значение В'];
 
   it('matches when only the case differs', () => {
-    expect(findSimilar('section1', sections)).toEqual(['Section1']);
-    expect(findSimilar('ОТЧЁТЫ', sections)).toEqual(['Отчёты']);
+    expect(findSimilar('поле1', sections)).toEqual(['Поле1']);
+    expect(findSimilar('ЗНАЧЕНИЕ А', sections)).toEqual(['Значение А']);
   });
 
   it('matches across extra and edge whitespace', () => {
-    expect(findSimilar('  Отчёты  ', sections)).toEqual(['Отчёты']);
+    expect(findSimilar('  Значение А  ', sections)).toEqual(['Значение А']);
   });
 
   it('matches a latin letter standing in for a cyrillic one', () => {
-    expect(findSimilar('Каталог (Catalog)', sections)).toEqual(['Кaталог  (Catalog)']);
+    expect(findSimilar('Значение Б (B)', sections)).toEqual(['Знaчение  Б (B)']);
   });
 
   it('matches the other direction too', () => {
-    expect(findSimilar('Sectiоn1', sections)).toEqual(['Section1']);
+    expect(findSimilar('Пoле1', sections)).toEqual(['Поле1']);
   });
 
   it('returns nothing when nothing is close', () => {
@@ -89,24 +89,10 @@ describe('запрос только по идентификаторам', () => 
   });
 
   it('другой запрос не признаётся', () => {
-    expect(idsOnly('cf["Section1"] = "Раздел А"')).toBeNull();
+    expect(idsOnly('cf["Поле1"] = "Раздел А"')).toBeNull();
   });
 
   it('пустой список не признаётся', () => {
     expect(idsOnly('id in []')).toBeNull();
-  });
-});
-
-describe('исправление написания не задевает соседние условия', () => {
-  it('починка слоя не трогает одноимённое значение кастомного поля', () => {
-    expect(replaceValue('layer = "e2e" and cf["Feature"] = "e2e"', null, 'e2e', 'E2E')).toBe(
-      'layer = "E2E" and cf["Feature"] = "e2e"',
-    );
-  });
-
-  it('починка значения не трогает имя поля', () => {
-    expect(replaceValue('cf["Раздел"] = "Раздел"', 'Раздел', 'Раздел', 'раздел')).toBe(
-      'cf["Раздел"] = "раздел"',
-    );
   });
 });
